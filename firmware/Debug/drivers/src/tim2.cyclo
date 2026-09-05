@@ -1,0 +1,4 @@
+../drivers/src/tim2.c:12:6:TIM2_Init	1
+../drivers/src/tim2.c:23:6:PWM_Init	1
+../drivers/src/tim2.c:51:6:PWM_BuzzerOn	1
+../drivers/src/tim2.c:52:6:PWM_BuzzerOff	1

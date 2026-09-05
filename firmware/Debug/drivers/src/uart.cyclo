@@ -1,0 +1,3 @@
+../drivers/src/uart.c:13:6:UART2_SendByte	2
+../drivers/src/uart.c:19:6:UART2_SendPacket	2
+../drivers/src/uart.c:29:6:UART_Init	1
