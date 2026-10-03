@@ -1,0 +1,64 @@
+# S.H.I.E.L.D compute-node configuration.
+#
+# Single source of truth: docs/PROTOCOL.md section 7.
+# Secrets are NOT here. They are ${VAR} references into .env.
+# Never commit a real key.
+
+camera:
+  # Re-probed after the Logitech Brio 100 arrived (DECISIONS.md D-028):
+  #   device 0 = laptop built-in - REJECTED, near-black (mean luma 3-7)
+  #   device 1 = Logitech Brio 100  <- in use (mean luma 154-198)
+  # The built-in was excluded on a luma >= 20 gate, not on guesswork. Device 0
+  # reads a dark scene at every geometry and is assumed covered or disabled.
+  # A dark camera is not a broken camera: it is unusable for training, which is
+  # what the gate is for (DECISIONS.md D-025).
+  # The index depends on enumeration order and shifts when a camera is plugged or
+  # unplugged: re-probe with `python tools/camera_check.py` after any change.
+  device: 1
+  width: 1920
+  height: 1080
+  # MJPG matters on the RPi: uncompressed YUYV costs ~2x the bandwidth and
+  # starves the burst grab. Camera.read() converts packed YUYV to BGR if a device
+  # grants it anyway (DECISIONS.md D-024).
+  # Kept at MJPG deliberately even though the Windows host readback reports YUY2
+  # whatever is requested - OpenCV's DirectShow backend does not honour the
+  # fourcc set, so that readback is not evidence about the RPi/Linux path. Do not
+  # "fix" this to YUYV based on the host probe (D-028).
+  fourcc: MJPG
+  # Auto-exposure and auto-white-balance have not settled this early; early
+  # frames are dark, blown out, or colour-shifted.
+  warmup_frames: 10
+  burst_frames: 5
+  # A read slower than this means the camera or bus has stalled.
+  stale_after_s: 2.0
+
+detector:
+  face_model: ../models/face.pt
+  person_model: yolov8n.pt
+  imgsz: 640
+  conf: 0.5
+
+recognizer:
+  faces_dir: ../known_faces
+  # Cosine distance. 0.6 is dlib's own strict default; 0.5 is what PROTOCOL
+  # section 7 specifies and is tighter. Raise if enrolled people fail to match.
+  match_distance: 0.5
+  # Below this confidence a detected face is treated as low_conf, not unknown.
+  alert_confidence: 50
+
+link:
+  # The RPi hosts this AP; the ESP32 is the TCP client.
+  host: 192.168.50.1
+  port: 8765
+  heartbeat_s: 2
+  reply_timeout_s: 5
+  frame_timeout_s: 5
+  max_body: 8192
+  hmac_key: ${SHIELD_LINK_KEY}
+
+backend:
+  url: ${SHIELD_BACKEND_URL}
+  token: ${SHIELD_API_TOKEN}
+  device_id: ${SHIELD_DEVICE_ID}
+  poll_interval_s: 5
+  ack_deadline_s: 30

@@ -1,0 +1,33 @@
+# Normalise line endings on checkin; keep the working copy native.
+* text=auto
+
+# Source
+*.py   text diff=python
+*.md   text
+*.txt  text
+*.toml text
+*.yaml text
+*.yml  text
+*.cfg  text
+*.ini  text
+
+# Native for platform scripts
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.sh   text eol=lf
+
+# Binary — never diff or line-ending-convert
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.bmp  binary
+*.webp binary
+*.mp4  binary
+*.avi  binary
+*.wav  binary
+*.mp3  binary
+*.pt   binary
+*.npy  binary
+*.onnx binary
+*.tflite binary
+*.h5   binary

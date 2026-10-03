@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets - only .env.example is tracked
+.env
+.env.*
+!.env.example
+
+# Models and datasets are large and machine-specific
+rpi/models/
+rpi/known_faces/
+rpi/datasets/
+rpi/runs/
+backend/data/
+backend/snapshots/
+*.log
+*.bak
+events.jsonl
+
+# Biometric media - never commit.
+# These are photographs of identifiable people: the operator, their friends,
+# and the WIDER FACE dataset. rpi/datasets/ above covers the labelled captures.
+# NOTE: gitignore has no inline comments - keep each pattern on its own line.
+rpi/enroll_photos/
+datasets/
+review/
+*.npy
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.h5
+*.pkl
+*.joblib
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.mp4
+*.avi
+*.wav
+*.mp3
+
+# Android / Gradle
+app/.gradle/
+app/build/
+app/local.properties
+*.apk
+*.aab
+
+# ESP-IDF
+firmware/esp32/build/
+firmware/esp32/sdkconfig
+firmware/esp32/managed_components/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

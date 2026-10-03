@@ -1,0 +1,35 @@
+# S.H.I.E.L.D — laptop / RPi Python dependencies
+# Pinned. Target Python 3.11.
+#
+# Install order matters. Read the notes below before running plain
+# `pip install -r requirements.txt` on a fresh machine.
+
+# --- Core CV stack (wheels available everywhere) ---
+ultralytics==8.4.170
+opencv-python==5.0.0.93
+numpy==2.4.6
+
+# --- Face recognition ---
+# face-recognition pulls in dlib. On Linux (RPi) dlib builds from source and
+# works; on Windows there is NO dlib wheel for Python 3.11 and it fails to
+# compile without a full MSVC toolchain.
+#
+# Windows: install dlib-bin first (prebuilt wheels), then face-recognition with
+#   --no-deps, then its remaining deps by hand:
+#     pip install dlib-bin==20.0.1
+#     pip install --no-deps face-recognition==1.3.0
+#     pip install "face-recognition-models==0.3.0" "Click==8.5.0"
+#     pip install "setuptools<81"
+#
+# The setuptools pin is not optional: face_recognition_models imports
+# pkg_resources, which setuptools 81+ removed. Without it face_recognition raises
+# "Please install face_recognition_models" even though it is installed.
+dlib-bin==20.0.1 ; sys_platform == "win32"
+face-recognition==1.3.0
+face-recognition-models==0.3.0
+Click==8.5.0
+setuptools<81
+
+# On Linux (RPi), replace the dlib-bin line above with a source build:
+#   sudo apt install -y build-essential cmake python3-dev
+#   pip install dlib==19.24.6
