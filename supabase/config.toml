@@ -1,0 +1,58 @@
+# Supabase CLI configuration for S.H.I.E.L.D.
+#
+# Project ref for this deployment: dnwwwsenujyaffcqiajt
+# The same ref appears in .env (SUPABASE_URL), in the pg_net trigger in
+# supabase/migrations/20261003090200_send_alert_webhook.sql, and in
+# tools/supabase_secrets.ps1. Four copies is one too many; they are kept in sync
+# by hand and a mismatch here is the first thing to check when "migrations
+# applied but the phone hears nothing".
+
+project_id = "dnwwwsenujyaffcqiajt"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+# Bounded to match the private 'snapshots' bucket created in migration
+# 20261003090000. Anything outside this list cannot be uploaded at all.
+file_size_limit = "5MiB"
+
+[auth]
+# No Supabase Auth. The Android app authenticates as `anon` with the project's
+# publishable key and is scoped by RLS alone (DECISIONS.md D-040). If the
+# deployment ever grows a second operator, enable email or anonymous sign-in
+# here and change devices_all_app to key on auth.uid() before adding a phone.
+enabled = false
+
+[edge_runtime]
+# `verify_jwt = false` is REQUIRED and is set per-function at deploy time, not
+# here: the pg_net webhook authenticates with the x-webhook-secret header and
+# carries no JWT, so Supabase's own JWT gate would reject every legitimate
+# delivery with 401 before the handler ever ran.
+# send-alert therefore does its own authentication, in constant time, before
+# parsing any body.
+policy = "per_function"
+
+[functions.send-alert]
+verify_jwt = false
+# No imports in index.ts, so there is no import_map to resolve and cold start is
+# just the Deno boot. entrypoint is explicit because the deploy tool defaults to
+# looking for a module in the function root.
+entrypoint = "index.ts"

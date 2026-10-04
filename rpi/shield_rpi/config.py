@@ -122,22 +122,84 @@ class LinkConfig:
 
 
 @dataclass(frozen=True)
-class BackendConfig:
+class SupabaseConfig:
+    """Where alerts are published. DECISIONS.md D-040.
+
+    ``key`` is the ``shield_rpi`` role's bearer token, not the service-role key.
+    The service-role key bypasses RLS, which would make the policies in
+    ``supabase/migrations/20261003090100_shield_roles_grants.sql`` decorative.
+    """
+
     url: str
-    token: str
-    device_id: str
-    poll_interval_s: float
-    ack_deadline_s: float
+    key: str
+    bucket: str
+    device_prefix: str
+    timeout_s: float = 10.0
+    max_snapshot_bytes: int = 524288
+    queue_dir: str = ""
+    queue_max_attempts: int = 12
 
     def __post_init__(self) -> None:
         if not self.url.startswith(("http://", "https://")):
-            raise ConfigError(f"backend.url must be http(s), got {self.url!r}")
-        if not self.token:
-            raise ConfigError("backend.token resolved empty; is SHIELD_API_TOKEN set?")
-        if self.ack_deadline_s <= self.poll_interval_s:
+            raise ConfigError(f"supabase.url must be http(s), got {self.url!r}")
+        if not self.key:
             raise ConfigError(
-                "backend.ack_deadline_s must exceed poll_interval_s "
-                f"({self.ack_deadline_s} <= {self.poll_interval_s})"
+                "supabase.key resolved empty; is SUPABASE_RPI_TOKEN set "
+                "(mint it with tools/mint_role_token.py)?"
+            )
+        if not self.bucket:
+            raise ConfigError("supabase.bucket must not be empty")
+        if self.timeout_s <= 0:
+            raise ConfigError("supabase.timeout_s must be > 0")
+        if self.max_snapshot_bytes <= 0:
+            raise ConfigError("supabase.max_snapshot_bytes must be > 0")
+        if self.queue_max_attempts < 1:
+            raise ConfigError("supabase.queue_max_attempts must be >= 1")
+
+
+@dataclass(frozen=True)
+class AlertConfig:
+    """How eager the alert path is."""
+
+    cooldown_s: float = 30.0
+    #: PROTOCOL.md 3.3 caps a snapshot at 512 KB; above that the storage bucket
+    #: rejects the upload with an opaque 413.
+    snapshot_jpeg_quality: int = 80
+    #: Longest edge of the stored snapshot. The stored image is what a human
+    #: looks at later to decide whether an alert was real, so it is kept sharp
+    #: rather than shrunk to save bytes (PLAN.md, "the 1080p latency question").
+    snapshot_max_edge_px: int = 1920
+
+    def __post_init__(self) -> None:
+        if self.cooldown_s < 0:
+            raise ConfigError("alert.cooldown_s must be >= 0")
+        if not 1 <= self.snapshot_jpeg_quality <= 100:
+            raise ConfigError("alert.snapshot_jpeg_quality must be 1-100")
+        if self.snapshot_max_edge_px < 320:
+            raise ConfigError("alert.snapshot_max_edge_px must be >= 320")
+
+
+@dataclass(frozen=True)
+class VerdictConfig:
+    """How long to wait for the user to answer before escalating.
+
+    PROTOCOL.md 3.7: the poll stops as soon as a verdict appears, when the
+    event is resolved, or after 10 minutes, whichever comes first.
+    """
+
+    timeout_s: float = 60.0
+    poll_interval_s: float = 2.0
+    hard_stop_s: float = 600.0
+
+    def __post_init__(self) -> None:
+        if self.timeout_s <= 0:
+            raise ConfigError("verdict.timeout_s must be > 0")
+        if self.poll_interval_s <= 0:
+            raise ConfigError("verdict.poll_interval_s must be > 0")
+        if self.hard_stop_s < self.timeout_s:
+            raise ConfigError(
+                "verdict.hard_stop_s must be >= verdict.timeout_s "
+                f"({self.hard_stop_s} < {self.timeout_s})"
             )
 
 
@@ -147,7 +209,9 @@ class Config:
     detector: DetectorConfig
     recognizer: RecognizerConfig
     link: LinkConfig
-    backend: BackendConfig
+    supabase: SupabaseConfig
+    alert: AlertConfig
+    verdict: VerdictConfig
     source_path: Path = field(default=DEFAULT_CONFIG_PATH)
 
 
@@ -226,7 +290,9 @@ def load_config(path: str | Path | None = None) -> Config:
     det = _require(raw, "detector", "<root>")
     rec = _require(raw, "recognizer", "<root>")
     link = _require(raw, "link", "<root>")
-    back = _require(raw, "backend", "<root>")
+    supa = _require(raw, "supabase", "<root>")
+    alert = raw.get("alert") or {}
+    verd = raw.get("verdict") or {}
 
     return Config(
         camera=CameraConfig(
@@ -258,12 +324,29 @@ def load_config(path: str | Path | None = None) -> Config:
             max_body=int(link.get("max_body", 8192)),
             hmac_key=str(_require(link, "hmac_key", "link")),
         ),
-        backend=BackendConfig(
-            url=str(_require(back, "url", "backend")).rstrip("/"),
-            token=str(_require(back, "token", "backend")),
-            device_id=str(_require(back, "device_id", "backend")),
-            poll_interval_s=float(back.get("poll_interval_s", 5)),
-            ack_deadline_s=float(back.get("ack_deadline_s", 30)),
+        supabase=SupabaseConfig(
+            url=str(_require(supa, "url", "supabase")).rstrip("/"),
+            key=str(_require(supa, "key", "supabase")),
+            bucket=str(supa.get("bucket", "snapshots")),
+            device_prefix=str(supa.get("device_prefix", "shield")),
+            timeout_s=float(supa.get("timeout_s", 10)),
+            max_snapshot_bytes=int(supa.get("max_snapshot_bytes", 524288)),
+            queue_dir=(
+                _resolve_path(str(supa["queue_dir"]), base)
+                if supa.get("queue_dir")
+                else str((base / "../runs/pending").resolve())
+            ),
+            queue_max_attempts=int(supa.get("queue_max_attempts", 12)),
+        ),
+        alert=AlertConfig(
+            cooldown_s=float(alert.get("cooldown_s", 30)),
+            snapshot_jpeg_quality=int(alert.get("snapshot_jpeg_quality", 80)),
+            snapshot_max_edge_px=int(alert.get("snapshot_max_edge_px", 1920)),
+        ),
+        verdict=VerdictConfig(
+            timeout_s=float(verd.get("timeout_s", 60)),
+            poll_interval_s=float(verd.get("poll_interval_s", 2)),
+            hard_stop_s=float(verd.get("hard_stop_s", 600)),
         ),
         source_path=config_path,
     )

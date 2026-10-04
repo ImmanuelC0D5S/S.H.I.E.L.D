@@ -43,19 +43,21 @@ BASE = """
       host: 192.168.50.1
       port: 8765
       hmac_key: ${SHIELD_LINK_KEY}
-    backend:
-      url: ${SHIELD_BACKEND_URL}
-      token: ${SHIELD_API_TOKEN}
-      device_id: ${SHIELD_DEVICE_ID}
+    supabase:
+      url: ${SUPABASE_URL}
+      key: ${SUPABASE_RPI_TOKEN}
+      device_prefix: ${SHIELD_DEVICE_ID}
 """
 
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SHIELD_LINK_KEY", "k" * 32)
-    monkeypatch.setenv("SHIELD_BACKEND_URL", "https://shield.example")
-    monkeypatch.setenv("SHIELD_API_TOKEN", "tok")
+    monkeypatch.setenv("SUPABASE_URL", "https://shield.example")
+    monkeypatch.setenv("SUPABASE_RPI_TOKEN", "tok")
     monkeypatch.setenv("SHIELD_DEVICE_ID", "shield-01")
+    monkeypatch.setenv("COOLDOWN_S", "30")
+    monkeypatch.setenv("VERDICT_TIMEOUT_S", "60")
 
 
 # -- happy path -----------------------------------------------------------
@@ -68,7 +70,7 @@ def test_loads_shipped_config():
     assert config.camera.device >= 0
     assert config.detector.imgsz == 640
     assert config.link.port == 8765
-    assert config.backend.device_id == "shield-01"
+    assert config.supabase.device_prefix == "shield-01"
 
 
 def test_pad_box_covers_landmark_extent():
@@ -124,7 +126,7 @@ def test_defaults_are_filled_in(tmp_path):
     assert config.camera.warmup_frames == 10
     assert config.camera.burst_frames == 5
     assert config.link.max_body == 8192
-    assert config.backend.poll_interval_s == 5.0
+    assert config.verdict.poll_interval_s == 2.0
 
 
 def test_relative_paths_resolve_against_config_file(tmp_path):
@@ -144,8 +146,8 @@ def test_relative_paths_resolve_against_config_file(tmp_path):
 def test_env_vars_are_interpolated(tmp_path):
     config = load_config(write_config(tmp_path, BASE))
     assert config.link.hmac_key == "k" * 32
-    assert config.backend.url == "https://shield.example"
-    assert config.backend.token == "tok"
+    assert config.supabase.url == "https://shield.example"
+    assert config.supabase.key == "tok"
 
 
 def test_missing_env_var_refuses_to_start(tmp_path, monkeypatch):
@@ -155,9 +157,9 @@ def test_missing_env_var_refuses_to_start(tmp_path, monkeypatch):
         load_config(write_config(tmp_path, BASE))
 
 
-def test_empty_backend_url_is_rejected(tmp_path, monkeypatch):
-    monkeypatch.setenv("SHIELD_BACKEND_URL", "")
-    with pytest.raises(ConfigError, match="backend.url"):
+def test_empty_supabase_url_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "")
+    with pytest.raises(ConfigError, match="supabase.url"):
         load_config(write_config(tmp_path, BASE))
 
 
@@ -236,22 +238,51 @@ def test_link_port_validation(tmp_path):
         load_config(write_config(tmp_path, body))
 
 
-def test_backend_url_scheme_validation(tmp_path, monkeypatch):
-    monkeypatch.setenv("SHIELD_BACKEND_URL", "ftp://nope")
+def test_supabase_url_scheme_validation(tmp_path, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "ftp://nope")
     with pytest.raises(ConfigError, match="must be http"):
         load_config(write_config(tmp_path, BASE))
 
 
-def test_ack_deadline_must_exceed_poll_interval(tmp_path):
-    body = BASE.replace("      device_id: ${SHIELD_DEVICE_ID}",
-                        "      device_id: ${SHIELD_DEVICE_ID}\n      poll_interval_s: 30\n      ack_deadline_s: 30")
-    with pytest.raises(ConfigError, match="ack_deadline_s must exceed"):
+def test_verdict_hard_stop_must_not_precede_timeout(tmp_path):
+    """A hard stop earlier than the verdict timeout would abort polling while
+    the user is still being asked, which reads to them as the system giving up."""
+    body = BASE.replace("      device_prefix: ${SHIELD_DEVICE_ID}",
+                        "      device_prefix: ${SHIELD_DEVICE_ID}\n"
+                        "    verdict:\n      timeout_s: 120\n      hard_stop_s: 60")
+    with pytest.raises(ConfigError, match="verdict.hard_stop_s must be"):
         load_config(write_config(tmp_path, body))
+
+
+def test_negative_cooldown_is_rejected(tmp_path):
+    body = BASE.replace("      device_prefix: ${SHIELD_DEVICE_ID}",
+                        "      device_prefix: ${SHIELD_DEVICE_ID}\n"
+                        "    alert:\n      cooldown_s: -1")
+    with pytest.raises(ConfigError, match="alert.cooldown_s must be"):
+        load_config(write_config(tmp_path, body))
+
+
+def test_empty_supabase_token_is_rejected(tmp_path, monkeypatch):
+    """A blank RPi token must stop startup, not produce 401s on every alert."""
+    monkeypatch.setenv("SUPABASE_RPI_TOKEN", "")
+    with pytest.raises(ConfigError, match="SUPABASE_RPI_TOKEN"):
+        load_config(write_config(tmp_path, BASE))
+
+
+def test_shipped_snapshot_cap_matches_protocol(tmp_path):
+    """PROTOCOL.md 3.3 caps a snapshot at 512 KB.
+
+    alerts.py refuses to upload anything larger, and the storage bucket enforces
+    its own limit. If these drift the failure surfaces as an opaque 413 from
+    the storage API instead of at the encoder.
+    """
+    config = load_config(write_config(tmp_path, BASE))
+    assert config.supabase.max_snapshot_bytes == 524288
 
 
 def test_trailing_slash_stripped_from_url(tmp_path):
     config = load_config(write_config(tmp_path, BASE))
-    assert config.backend.url == "https://shield.example", "no trailing slash"
+    assert config.supabase.url == "https://shield.example", "no trailing slash"
 
 
 # -- camera-only loading -------------------------------------------------
@@ -260,11 +291,11 @@ def test_trailing_slash_stripped_from_url(tmp_path):
 def test_camera_section_loads_without_secrets(tmp_path, monkeypatch):
     """Capture/enrol must work before the deployment secrets exist.
 
-    Dataset capture and enrolment run in Phase 1; the backend token and link key
+    Dataset capture and enrolment run in Phase 1; the Supabase token and link key
     only come into existence in Phase 6. Requiring them to open a camera would
     block Phase 1 behind Phase 6.
     """
-    for name in ("SHIELD_LINK_KEY", "SHIELD_BACKEND_URL", "SHIELD_API_TOKEN", "SHIELD_DEVICE_ID"):
+    for name in ("SHIELD_LINK_KEY", "SUPABASE_URL", "SUPABASE_RPI_TOKEN", "SHIELD_DEVICE_ID"):
         monkeypatch.delenv(name, raising=False)
     config = load_camera_config(CONFIG_DIR / "config.yaml")
     assert (config.width, config.height) == (1920, 1080)
@@ -283,7 +314,7 @@ def test_camera_section_missing(tmp_path):
 
 
 def test_full_config_still_requires_secrets(tmp_path, monkeypatch):
-    """load_config stays strict: the app must not run without its keys."""
+    """load_config stays strict: the service must not run without its keys."""
     monkeypatch.delenv("SHIELD_LINK_KEY", raising=False)
     with pytest.raises(ConfigError, match="SHIELD_LINK_KEY is not set"):
         load_config(write_config(tmp_path, BASE))

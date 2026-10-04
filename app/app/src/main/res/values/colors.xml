@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shield_background">#0B0F14</color>
+    <color name="shield_alarm_red">#FF3B30</color>
+    <color name="shield_known_green">#34C759</color>
+    <color name="shield_warning_amber">#FF9F0A</color>
+    <color name="shield_text_primary">#F5F7FA</color>
+    <color name="shield_text_secondary">#9AA5B1</color>
+    <color name="ic_launcher_background">#0B0F14</color>
+</resources>

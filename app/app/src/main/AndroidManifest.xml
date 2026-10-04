@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Package name must match google-services.json exactly. See
+      app/app/build.gradle.kts applicationId.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      P0 #6: Android 13+ will not show a notification at all without this, and
+      the alert's whole purpose is to make the phone audible. Requested at runtime
+      from MainActivity - see PermissionGate.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      P0 #2/P0 #6: launches the alert over the lock screen.
+
+      Android 14 (API 34) restricts this permission to apps whose category is
+      calling or alarm. This app declares CATEGORY_ALARM below, which is the
+      supported way to qualify, but the grant is still not automatic - it has to
+      be requested through ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT. Without it
+      the notification still appears but the phone stays locked, which fails the
+      "screen locked" half of the Done-when test.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!--
+      P0 #6: doze defers network and timers to save battery, and an intruder
+      alert that arrives four hours late is no alert. The app prompts for an
+      exemption in Settings; without it, FCM high-priority delivery is degraded
+      on some OEM builds.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!--
+      Not held: QUERY_ALL_PACKAGES. The snapshot URLs are HTTPS to one host and
+      are fetched by URL, so no package visibility is needed. Adding it would
+      make the app subject to the Play Store's package-visibility declaration for
+      no benefit.
+    -->
+
+    <application
+        android:name=".ShieldApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SHIELD"
+        tools:targetApi="31">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SHIELD">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          P0 #2/P0 #3: the full-screen intent target.
+
+          showOnLockScreen and turnScreenOn are set in code rather than here:
+          setShowWhenLocked and setTurnScreenOn are deprecated on API 27+ in
+          favour of KeyguardManager.requestDismissKeyguard, which needs an
+          Activity reference and cannot be expressed in a manifest.
+
+          excludeFromRecents because a user dismissing an intruder alert should
+          not have it waiting in the recents list to be tapped again, and
+          noHistory so backing out of the alert closes it rather than revealing
+          the app underneath while an intruder may still be present.
+        -->
+        <activity
+            android:name=".alarm.AlertActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:showOnLockScreen="true"
+            android:taskAffinity="com.immanuelc0d5s.shield.alert"
+            android:theme="@style/Theme.SHIELD.Alert"
+            android:turnScreenOn="true" />
+
+        <!--
+          P0 #1: receives the data-only high-priority FCM message.
+
+          exported=false is correct even though FCM dispatches to it: the
+          component is bound by the Firebase SDK inside this process, not reached
+          across processes by other apps.
+        -->
+        <service
+            android:name=".fcm.ShieldMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/alarm_channel_id" />
+        <!--
+          No default icon metadata: the payload is data-only and this app builds
+          its own notification, so FCM's automatic notification path is never
+          used. Declaring a default would be dead config that implies otherwise.
+        -->
+
+    </application>
+
+</manifest>

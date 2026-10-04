@@ -56,9 +56,40 @@ link:
   max_body: 8192
   hmac_key: ${SHIELD_LINK_KEY}
 
-backend:
-  url: ${SHIELD_BACKEND_URL}
-  token: ${SHIELD_API_TOKEN}
-  device_id: ${SHIELD_DEVICE_ID}
-  poll_interval_s: 5
-  ack_deadline_s: 30
+supabase:
+  # DECISIONS.md D-040: alerts go to Supabase, not to a FastAPI backend. The
+  # backend/ directory is abandoned; `alerts.py` uploads the snapshot and
+  # inserts one row, and the send-alert Edge Function does the FCM push from a
+  # database webhook on that insert.
+  url: ${SUPABASE_URL}
+  # The shield_rpi role's bearer token, NOT the service-role key. Mint it with
+  #   python tools/mint_role_token.py --role shield_rpi
+  # The service-role key bypasses RLS entirely, which would make every policy in
+  # supabase/migrations/20261003090100_shield_roles_grants.sql decorative.
+  key: ${SUPABASE_RPI_TOKEN}
+  # Private bucket. image_url is a per-delivery signed URL minted by the Edge
+  # Function, never a public path.
+  bucket: snapshots
+  # First path segment for uploads, so one device's footage is separable.
+  device_prefix: ${SHIELD_DEVICE_ID}
+  timeout_s: 10
+  # PROTOCOL.md 3.3 caps a snapshot at 512 KB.
+  max_snapshot_bytes: 524288
+  # Durable retry for alerts that could not be published. Gitignored.
+  queue_dir: ../runs/pending
+  queue_max_attempts: 12
+
+alert:
+  # shield-rpi-prompt.md: ignore new triggers for this long after an alert.
+  cooldown_s: ${COOLDOWN_S}
+  snapshot_jpeg_quality: 80
+  snapshot_max_edge_px: 1920
+
+verdict:
+  # shield-rpi-prompt.md: poll events.verdict every 2s up to VERDICT_TIMEOUT_S,
+  # then escalate to the buzzer. The timeout that matches the Telegram fallback
+  # is still TBD upstream; 60 s is the placeholder the prompt carries.
+  timeout_s: ${VERDICT_TIMEOUT_S}
+  poll_interval_s: 2
+  # PROTOCOL.md 3.7 stop condition: give up polling an event after 10 minutes.
+  hard_stop_s: 600

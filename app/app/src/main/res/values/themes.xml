@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      No ActionBar: MainActivity draws its own top bar in Compose and
+      AlertActivity must be a bare full-bleed surface with nothing between the
+      snapshot and the three buttons.
+    -->
+    <style name="Theme.SHIELD" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/shield_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+    </style>
+
+    <!--
+      AlertActivity has no theme-level keep-screen-on attribute; there isn't one.
+      The flag is set in code via WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+      which is the only supported mechanism.
+
+      It matters because an intruder alert where the display sleeps after fifteen
+      seconds defeats the purpose, and the flag only applies while the alert is
+      on screen - which is exactly the window in which it is needed. The window is
+      released automatically when the Activity is destroyed.
+    -->
+    <style name="Theme.SHIELD.Alert" parent="Theme.SHIELD">
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
+</resources>

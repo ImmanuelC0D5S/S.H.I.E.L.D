@@ -13,6 +13,21 @@ venv/
 .env.*
 !.env.example
 
+# Credential files. These carry live private keys: the Firebase admin
+# service-account JSON can push to every FCM topic, and google-services.json
+# carries the Firebase API key. Both must never reach git.
+secrets/
+firebase-adminsdk*.json
+service-account*.json
+app/*.json
+app/**/google-services.json
+*.jks
+*.keystore
+
+# Supabase CLI local state (may contain an access token)
+supabase/.temp/
+supabase/.branches/
+
 # Models and datasets are large and machine-specific
 rpi/models/
 rpi/known_faces/
@@ -50,11 +65,24 @@ review/
 *.mp3
 
 # Android / Gradle
+#
+# `**/build/` not `build/`. The Gradle project root is `app/` and the module is
+# `app/app/`, so the artifact directory is `app/app/build/` - two levels deep. A
+# one-level pattern matches nothing, and the first `git add app` would have
+# committed ~2000 generated files including the merged google-services values.
+app/**/build/
+app/**/.gradle/
 app/.gradle/
-app/build/
 app/local.properties
 *.apk
 *.aab
+
+# Room schema history is committed on purpose (it is what a Migration diff is
+# written against), but the generated DAO/DB implementations are not. The build
+# directory already covers them; this is belt and braces for anyone who moves
+# the module.
+*_Impl.java
+*_Impl.class
 
 # ESP-IDF
 firmware/esp32/build/
@@ -66,3 +94,16 @@ firmware/esp32/managed_components/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Project documentation is local-only.
+#
+# README.md is the exception and is tracked. Everything else -- DECISIONS.md,
+# HANDOFF.md, PLAN.md, docs/PROTOCOL.md and the shield-*-prompt.md briefs --
+# stays on disk and out of the repository, so the design record and the
+# authoritative protocol spec are not published to a remote that may outlive
+# the hardware they describe.
+#
+# `*.md` then `!README.md`: order matters in gitignore, the last matching
+# pattern wins, so the negation has to come after the wildcard.
+*.md
+!README.md

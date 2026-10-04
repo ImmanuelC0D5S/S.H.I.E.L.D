@@ -1,0 +1,87 @@
+[versions]
+# AGP 8.9.2, not 8.7.x. The installed platforms are android-34 and android-36
+# only, and there is no cmdline-tools on this machine, so sdkmanager cannot fetch
+# android-35 to satisfy an older plugin. 8.9 is the first line that supports
+# compileSdk 36, and it requires Gradle 8.11.1 - which is what the wrapper pins.
+agp = "8.9.2"
+kotlin = "2.0.21"
+ksp = "2.0.21-1.0.28"
+
+# SDK levels. compileSdk must be one this machine has installed or the build
+# fails before it starts - there is no cmdline-tools here, so sdkmanager cannot
+# fetch a missing platform. Only android-34 and android-36 exist locally.
+compileSdk = "36"
+targetSdk = "36"
+# 26 rather than 24: the alarm path leans on full-screen intents and
+# NotificationChannel.setBypassDnd, and API 26 is where the channel-based
+# notification model and setVibrationPattern became dependable. Below it the app
+# would need a second notification path for no benefit on a phone bought for this.
+minSdk = "26"
+
+activityCompose = "1.9.3"
+composeBom = "2024.12.01"
+coreKtx = "1.15.0"
+lifecycle = "2.8.7"
+navigationCompose = "2.8.5"
+room = "2.6.1"
+sqliteKtx = "2.4.0"
+sqlcipher = "4.6.1"
+firebaseBom = "33.7.0"
+coil = "2.7.0"
+
+junit = "4.13.2"
+androidxJunit = "1.2.1"
+espresso = "3.6.1"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+# collectAsStateWithLifecycle lives here, not in lifecycle-runtime-ktx. Without it
+# the app collects flows while backgrounded, which wakes the CPU for state the UI
+# is not drawing.
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycle" }
+
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+androidx-compose-material-icons = { module = "androidx.compose.material:material-icons-extended" }
+
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
+
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+androidx-sqlite-ktx = { module = "androidx.sqlite:sqlite-ktx", version.ref = "sqliteKtx" }
+# P0 #4: the event log is encrypted at rest. SQLCipher rather than plain SQLite
+# because the rows are signed storage URLs of photographs of the user's home.
+sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
+
+firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging-ktx" }
+
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
+
+junit = { module = "junit:junit", version.ref = "junit" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version = "1.9.0" }
+androidx-junit = { module = "androidx.test.ext:junit", version.ref = "androidxJunit" }
+androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+# Required by Kotlin 2.x for the Compose compiler. Without it @Composable does
+# not compile, and the failure message points at the annotation rather than here.
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+# Reads app/app/google-services.json into resources. That file is gitignored and
+# carries the Firebase API key; the build fails loudly without it rather than
+# producing an app that receives no pushes.
+google-services = { id = "com.google.gms.google-services", version = "4.4.2" }

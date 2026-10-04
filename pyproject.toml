@@ -11,7 +11,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/*" = ["ARG001", "ARG002"]
+# Test doubles routinely take arguments they ignore: a stubbed detector is
+# indexed by call count, and a scripted verdict client takes an event id it does
+# not need. ARG005 fires on every one of them and burying the real signal.
+"**/tests/*" = ["ARG001", "ARG002", "ARG005"]
 "rpi/shield_rpi/enroll.py" = ["ARG002"]  # CLI passes args straight through
 
 [tool.ruff.lint.flake8-tidy-imports]

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">S.H.I.E.L.D</string>
+
+    <!--
+      Must match the channel id in AlarmChannels.kt. It is a string resource
+      rather than a literal so the manifest reference and the runtime
+      NotificationManager call cannot drift apart - a mismatch here does not throw,
+      it silently posts to a channel that does not exist and the alarm never
+      sounds.
+    -->
+    <string name="alarm_channel_id" translatable="false">shield_alarm_v1</string>
+    <string name="status_channel_id" translatable="false">shield_status_v1</string>
+
+    <string name="alert_title_unknown">Unknown person detected</string>
+    <string name="alert_title_low_conf">Possible intruder — confirm</string>
+    <string name="action_known">Known</string>
+    <string name="action_intruder">Intruder</string>
+    <string name="action_dismiss">Dismiss</string>
+
+    <string name="tab_alerts">Alerts</string>
+    <string name="tab_history">History</string>
+    <string name="tab_settings">Settings</string>
+
+    <string name="settings_armed">System armed</string>
+    <string name="settings_armed_summary">When disarmed, the sensor replies clear and no alerts are raised.</string>
+    <string name="settings_test_alert">Send test alert</string>
+    <string name="settings_test_alert_summary">Inserts a status 2 event so the push path can be checked end to end.</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notifications_summary">Required for the alarm. Without it nothing is shown or heard.</string>
+    <string name="settings_full_screen">Lock-screen alerts</string>
+    <string name="settings_full_screen_summary">Required to show the alert over the lock screen.</string>
+    <string name="settings_battery">Battery optimisation</string>
+    <string name="settings_battery_summary">Doze can delay push delivery. Exempt this app.</string>
+
+    <string name="history_empty">No events yet.</string>
+    <string name="verdict_none">Awaiting your answer</string>
+    <string name="verdict_known">Marked known</string>
+    <string name="verdict_intruder">Marked intruder</string>
+</resources>

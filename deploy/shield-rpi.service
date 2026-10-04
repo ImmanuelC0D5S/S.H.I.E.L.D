@@ -1,0 +1,74 @@
+# S.H.I.E.L.D compute node. Install:
+#
+#   sudo cp deploy/shield-rpi.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now shield-rpi
+#
+# Phase 9 (HANDOFF.md) owns the broader hardening: hostapd autostart, log
+# rotation, watchdogs, cold-boot verification. This unit covers only what the
+# service needs to survive a reboot unattended.
+
+[Unit]
+Description=S.H.I.E.L.D intrusion detection service (RPi 4B)
+Documentation=file:/opt/shield/docs/PROTOCOL.md
+After=network-online.target
+Wants=network-online.target
+
+# The sensor link dies if the AP is not up, and PROTOCOL.md 2.8 says a dead RPi
+# must end in an alarm rather than silence. So starting before the AP is
+# configured is safe: the node comes up, finds no sensor, and the ESP32's own
+# fail-safe handles it. The reverse ordering - requiring hostapd - would mean a
+# hostapd failure silently disables detection.
+After=network.target
+
+[Service]
+Type=simple
+User=shield
+Group=shield
+WorkingDirectory=/opt/shield/rpi
+
+# Secrets live here and nowhere else. .env is gitignored; this file is not
+# tracked either (see .gitignore). Mode must be 0600.
+EnvironmentFile=/opt/shield/.env
+
+ExecStart=/opt/shield/rpi/.venv/bin/python -m shield_rpi.service --log-level INFO
+
+# Restart on any exit. The queue and the link both survive a restart, so a crash
+# costs at most one event of latency.
+Restart=always
+RestartSec=3
+
+# Do not give up. A service that has hit the start limit is an intruder alarm
+# that has silently stopped being an intruder alarm.
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shield-rpi
+
+# --- Hardening ---
+# The process reads a camera, writes its queue and talks to two sockets. It does
+# not need anything else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=false
+ReadWritePaths=/opt/shield/rpi/runs
+# ReadOnlyPaths would break camera access on some V4L2 setups, so the camera is
+# granted explicitly instead of by relaxing the whole filesystem view.
+DeviceAllow=/dev/video0 rw
+DeviceAllow=/dev/video1 rw
+
+# The sensor link is TCP to 192.168.50.1:8765 and Supabase is HTTPS out. No
+# listening sockets are needed beyond 8765 itself, which it does not listen on -
+# it connects out. Egress is not restricted here because the cellular failover
+# in PROTOCOL.md 5 changes the route at runtime.
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+# Give up after a hard hang rather than sitting there holding the camera.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
