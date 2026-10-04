@@ -17,7 +17,6 @@ data class MainUiState(
     /** Defaults to armed. A failure to read the flag must not present a disarmed
      *  system while the RPi is in fact alerting. */
     val armed: Boolean = true,
-    val sendingTest: Boolean = false,
     val statusMessage: String? = null,
     val localEventCount: Int = 0,
 )
@@ -71,6 +70,12 @@ class MainViewModel(private val repository: ShieldRepository) : ViewModel() {
      * Optimistic: the switch moves immediately and rolls back if the write fails.
      * Making the user wait on a network round trip to flip a safety switch is
      * worse, and rolling back is the honest response to a failure.
+     *
+     * There is deliberately no `sendTestAlert` here any more. It inserted a
+     * `status = 2` row as `anon`, which migration 20261003090100 revokes, so it
+     * could only ever have returned
+     * `401 42501 permission denied for table events`. Test alerts are inserted
+     * from the SQL editor; see the note in SettingsScreen.
      */
     fun setArmed(armed: Boolean) {
         val previous = _state.value.armed
@@ -87,37 +92,6 @@ class MainViewModel(private val repository: ShieldRepository) : ViewModel() {
                     _state.value = _state.value.copy(
                         armed = previous,
                         statusMessage = "Could not change the arm state. Check your connection.",
-                    )
-                }
-        }
-    }
-
-    /**
-     * P0 #5: "Send test alert".
-     *
-     * Inserts a real `status = 2` row and reports what happened, including the
-     * event id so the row can be found in the Supabase editor. A test button that
-     * swallows failures is worse than none: it turns "is the push working?" into
-     * an unanswerable question.
-     */
-    fun sendTestAlert() {
-        if (_state.value.sendingTest) return
-        _state.value = _state.value.copy(sendingTest = true, statusMessage = "Sending…")
-
-        viewModelScope.launch {
-            repository.insertTestAlert(deviceId = "app-test")
-                .onSuccess { eventId ->
-                    _state.value = _state.value.copy(
-                        sendingTest = false,
-                        statusMessage = "Inserted $eventId. The alarm should arrive in a few seconds.",
-                    )
-                    refresh()
-                }
-                .onFailure { error ->
-                    Log.e(TAG, "test alert failed", error)
-                    _state.value = _state.value.copy(
-                        sendingTest = false,
-                        statusMessage = "Could not insert the test event: ${error.message}",
                     )
                 }
         }

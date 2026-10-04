@@ -147,47 +147,6 @@ class SupabaseClient(
             }
         }
 
-    /**
-     * Insert a `status = 2` event to test the whole push path.
-     *
-     * P0 #5's "Send test alert". It inserts a real row because the only honest
-     * way to prove the database webhook and the Edge Function work is to make
-     * the same insert the RPi makes. The row is marked by its event id prefix so
-     * it is identifiable in the log.
-     */
-    suspend fun insertTestEvent(deviceId: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            requireConfigured()
-            val eventId = "test-" + java.util.UUID.randomUUID()
-            val row = JSONObject().apply {
-                put("id", eventId)
-                put("ts", System.currentTimeMillis() / 1000)
-                put("status", AlertPayload.STATUS_ALERT)
-                put("confidence", 100)
-                // No image. A test alert that claimed a snapshot would 404 in the
-                // alert screen and look like the signed-URL path is broken.
-                put("image_path", "")
-                put("needs_verdict", true)
-                put("device_id", deviceId)
-                put("identity", JSONObject.NULL)
-            }
-
-            val connection = open("/rest/v1/events", "POST").apply {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Prefer", "return=minimal")
-            }
-            connection.outputStream.use { it.write(JSONArray().put(row).toString().toByteArray()) }
-
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                throw SupabaseException("test alert insert failed: $status ${connection.readBody()}")
-            }
-            connection.disconnect()
-            eventId
-        }
-    }
-
     // -- system state -----------------------------------------------------
 
     /**

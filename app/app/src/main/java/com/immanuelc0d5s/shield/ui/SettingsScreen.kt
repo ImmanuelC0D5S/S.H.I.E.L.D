@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -25,20 +23,21 @@ import com.immanuelc0d5s.shield.alarm.AlarmPlayer
 import com.immanuelc0d5s.shield.ui.theme.ShieldAlertColors
 
 /**
- * P0 #5: arm/disarm, "Send test alert", and the permission fixes.
+ * P0 #5: arm/disarm and the permission fixes.
  *
  * The permission rows are here as well as in the first-run gate. First-run only
  * catches the permissions missing at install; a user who declined and dismissed
  * the gate needs somewhere to come back to.
+ *
+ * `statusMessage` still reports the arm/disarm result. It is not the test-alert
+ * status it used to share a card with.
  */
 @Composable
 fun SettingsScreen(
     armed: Boolean,
-    sendingTest: Boolean,
     statusMessage: String?,
     localEventCount: Int,
     onArmedChange: (Boolean) -> Unit,
-    onSendTestAlert: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -74,6 +73,17 @@ fun SettingsScreen(
                 }
                 Switch(checked = armed, onCheckedChange = onArmedChange)
             }
+            // Arm/disarm feedback. This used to live in the test-alert card; it is
+            // the only status the app can report about its own writes, so it
+            // belongs with the switch that causes it.
+            statusMessage?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                )
+            }
         }
 
         if (!armed) {
@@ -91,32 +101,43 @@ fun SettingsScreen(
             }
         }
 
-        // -- test alert ---------------------------------------------------
+        // -- testing -------------------------------------------------------
+        //
+        // There is deliberately no "Send test alert" button here. It used to be
+        // P0 #5, and it could never work: it POSTed to /rest/v1/events with the
+        // anon key, and migration 20261003090100 does `revoke insert on public.events
+        // from anon`. Every press returned
+        //   401 42501 permission denied for table events
+        //
+        // The grant is the correct side of that conflict, not the bug. `anon` is the
+        // project's publishable key, which ships inside every APK, so allowing it to
+        // insert would let anyone who unzips the app forge intrusion records into
+        // the audit trail and spam this phone with pushes. An app that can write its
+        // own evidence is not evidence.
+        //
+        // So the insert is an operator action, done from the Supabase SQL editor.
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Send test alert", style = MaterialTheme.typography.titleLarge)
+                Text("Testing the push path", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Inserts a status 2 event, which makes the RPi's whole push path " +
-                        "run: database webhook, Edge Function, FCM, alarm on this phone. " +
-                        "The only honest end-to-end check is a real insert.",
+                    "Test alerts are inserted from the Supabase SQL editor, not from " +
+                        "this app. Insert a row with status = 2 into public.events and " +
+                        "the whole path runs: database webhook, Edge Function, FCM, " +
+                        "and the alarm on this phone.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Button(
-                    onClick = onSendTestAlert,
-                    enabled = !sendingTest,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    ),
-                ) {
-                    Text(if (sendingTest) "Sending…" else "Send")
-                }
-                statusMessage?.let {
-                    Text(it, style = MaterialTheme.typography.bodyLarge)
-                }
+                Text(
+                    "This app deliberately cannot insert one. It authenticates as anon, " +
+                        "which has read access to events and no write access, so a " +
+                        "compromised or reverse-engineered APK cannot fabricate an " +
+                        "intrusion.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 

@@ -97,17 +97,6 @@ class ShieldRepository(
 
     // -- diagnostics ------------------------------------------------------
 
-    /**
-     * P0 #5: the settings screen's "Send test alert".
-     *
-     * Inserts a real `status = 2` event rather than firing a local notification,
-     * because the thing being tested is the path *through* the database webhook
-     * and the Edge Function. A locally-posted notification would prove nothing:
-     * it would succeed on a deployment where the webhook is broken.
-     */
-    suspend fun insertTestAlert(deviceId: String): Result<String> =
-        client.insertTestEvent(deviceId)
-
     suspend fun localEventCount(): Int = dao.count()
 
     companion object {
@@ -129,6 +118,3 @@ class ShieldRepository(
         }
     }
 }
-
-/** Result of a local-cache miss, used by the alert screen to pick a load strategy. */
-fun EventEntity.isTestEvent(): Boolean = id.startsWith("test-")

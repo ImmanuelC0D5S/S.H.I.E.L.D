@@ -31,6 +31,38 @@ class ShieldApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // SQLCipher's native library, before anything can open the database.
+        //
+        // net.zetetic:sqlcipher-android ships libsqlcipher.so for all four ABIs and
+        // does NOT load it for you. SupportOpenHelperFactory reaches
+        // SQLiteConnection.nativeOpen through JNI, so until this call the method
+        // exists in the Java class and has no implementation behind it, and the
+        // first database open dies with
+        //   UnsatisfiedLinkError: No implementation found for
+        //   SQLiteConnection.nativeOpen (net.zetetic.database.sqlcipher)
+        //
+        // onCreate is the only place early enough. Application.onCreate runs before
+        // any Activity, Service or ContentProvider in this process, and
+        // ShieldRepository.get() below opens the event log -- so a load placed in
+        // MainActivity, or lazily on first query, loses the race against the
+        // FCM service, which can start this process with no Activity at all when a
+        // push arrives. That path is the one that matters most here: it is the
+        // alarm arriving, and it would crash before the alarm could play.
+        //
+        // Idempotent and cheap after the first call, so this is safe on every start.
+        try {
+            System.loadLibrary("sqlcipher")
+        } catch (error: UnsatisfiedLinkError) {
+            // Fail here, loudly, rather than at the first database open with an
+            // error that names a JNI method and not the cause. A missing or
+            // unloadable .so almost always means the ABI is not in the APK.
+            throw IllegalStateException(
+                "libsqlcipher.so could not be loaded. Check that the APK contains " +
+                    "jni/<abi>/libsqlcipher.so for this device's ABI.",
+                error,
+            )
+        }
+
         // Channels must exist before any notification is posted. On Android 8+ a
         // post to an unknown channel id is dropped silently: no notification and
         // no error, which reads as "the app received the push and did nothing".

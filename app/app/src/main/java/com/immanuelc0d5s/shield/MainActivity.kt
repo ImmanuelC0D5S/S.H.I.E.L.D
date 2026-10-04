@@ -101,11 +101,9 @@ private fun MainRoot() {
             composable(Tab.SETTINGS.route) {
                 SettingsScreen(
                     armed = state.armed,
-                    sendingTest = state.sendingTest,
                     statusMessage = state.statusMessage,
                     localEventCount = state.localEventCount,
                     onArmedChange = viewModel::setArmed,
-                    onSendTestAlert = viewModel::sendTestAlert,
                     onRefresh = viewModel::refresh,
                 )
             }
