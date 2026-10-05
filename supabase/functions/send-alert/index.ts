@@ -349,14 +349,22 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   let imageUrl: string;
-  try {
-    imageUrl = await signedSnapshotUrl(row.image_path);
-  } catch (error) {
-    // The event is claimed but unsent. Prefer a snapshot-less alert over no
-    // alert: the user can still see the time and confidence and ask the RPi for
-    // more, whereas silence leaves them believing the house is quiet.
-    console.error('signed URL failed, sending without image_url:', String(error));
+  // No snapshot is attached when the trigger produced no usable face: the RPi
+  // still alarms (absence of a face is not absence of an intruder) but publishes
+  // an empty image_path. Signing "" would be a guaranteed 400 on every such
+  // alert, so skip it rather than spending a round trip to learn that.
+  if (!row.image_path) {
     imageUrl = '';
+  } else {
+    try {
+      imageUrl = await signedSnapshotUrl(row.image_path);
+    } catch (error) {
+      // The event is claimed but unsent. Prefer a snapshot-less alert over no
+      // alert: the user can still see the time and confidence and ask the RPi for
+      // more, whereas silence leaves them believing the house is quiet.
+      console.error('signed URL failed, sending without image_url:', String(error));
+      imageUrl = '';
+    }
   }
 
   let devices: Array<{ id: string; fcm_token: string }>;

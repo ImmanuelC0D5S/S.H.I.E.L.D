@@ -13,21 +13,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.immanuelc0d5s.shield.data.AlertPayload
 import com.immanuelc0d5s.shield.data.ShieldEvent
 import com.immanuelc0d5s.shield.data.Verdict
 import com.immanuelc0d5s.shield.ui.theme.ShieldAlertColors
+import com.immanuelc0d5s.shield.ui.theme.ShieldGlass
+import com.immanuelc0d5s.shield.ui.theme.ShieldSpacing
 
 /**
  * P0 #4: the event log, newest first, with a thumbnail per row.
@@ -42,51 +44,100 @@ fun HistoryScreen(
     nowSeconds: Long,
     modifier: Modifier = Modifier,
 ) {
-    if (events.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "No events yet.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        return
-    }
+    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        AmbientBackground()
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(events, key = { it.id }) { event ->
-            EventRow(event = event, nowSeconds = nowSeconds)
+        if (events.isEmpty()) {
+            EmptyState()
+            return@Box
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ShieldSpacing.screen,
+                end = ShieldSpacing.screen,
+                top = ShieldSpacing.lg,
+                bottom = ShieldSpacing.xxl,
+            ),
+            verticalArrangement = Arrangement.spacedBy(ShieldSpacing.md),
+        ) {
+            item { SectionLabel("Recent activity") }
+            items(events, key = { it.id }) { event ->
+                EventRow(event = event, nowSeconds = nowSeconds)
+            }
         }
     }
 }
 
 @Composable
-private fun EventRow(event: ShieldEvent, nowSeconds: Long) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
+private fun EmptyState() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(ShieldSpacing.screen),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color.White.copy(alpha = 0.05f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(ShieldAlertColors.known.copy(alpha = 0.5f)),
+            )
+        }
+        Text(
+            "No events yet",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(top = ShieldSpacing.lg),
+        )
+        Text(
+            "Nothing has been detected since the log was last cleared.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = ShieldSpacing.xs),
+        )
+    }
+}
+
+@Composable
+private fun EventRow(event: ShieldEvent, nowSeconds: Long) {
+    val accent = when (event.verdict) {
+        Verdict.KNOWN -> ShieldAlertColors.known
+        Verdict.INTRUDER -> ShieldAlertColors.intruder
+        null -> ShieldAlertColors.lowConfidence
+    }
+
+    GlassCard(contentPadding = ShieldSpacing.md) {
         Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(ShieldSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Thumbnail(event)
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(titleFor(event), style = MaterialTheme.typography.titleLarge)
+                Text(
+                    titleFor(event),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 Text(
                     "${formatEventTs(event.ts)} · ${relativeAge(event.ageSeconds(nowSeconds))}",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                VerdictChip(event.verdict)
+                StatusChip(label = verdictLabel(event.verdict), color = accent)
             }
         }
     }
@@ -94,13 +145,14 @@ private fun EventRow(event: ShieldEvent, nowSeconds: Long) {
 
 @Composable
 private fun Thumbnail(event: ShieldEvent) {
-    val hasImage = event.imagePath.isNotBlank() && !event.id.startsWith("test-")
+    val hasImage = event.imagePath.isNotBlank()
 
     Box(
         modifier = Modifier
-            .size(72.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .size(64.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(Modifier),
         contentAlignment = Alignment.Center,
     ) {
         if (hasImage) {
@@ -108,33 +160,29 @@ private fun Thumbnail(event: ShieldEvent) {
                 model = event.imagePath,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp)),
             )
         } else {
             Text(
-                if (event.id.startsWith("test-")) "TEST" else "—",
-                style = MaterialTheme.typography.labelLarge,
+                "—",
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
 
-@Composable
-private fun VerdictChip(verdict: Verdict?) {
-    val (label, colour) = when (verdict) {
-        Verdict.KNOWN -> "Marked known" to ShieldAlertColors.known
-        Verdict.INTRUDER -> "Marked intruder" to ShieldAlertColors.intruder
-        null -> "Awaiting your answer" to ShieldAlertColors.lowConfidence
-    }
-    Text(label, style = MaterialTheme.typography.bodyLarge, color = colour)
+private fun verdictLabel(verdict: Verdict?): String = when (verdict) {
+    Verdict.KNOWN -> "Marked known"
+    Verdict.INTRUDER -> "Marked intruder"
+    null -> "Awaiting your answer"
 }
 
 private fun titleFor(event: ShieldEvent): String = when {
-    event.id.startsWith("test-") -> "Test alert"
-    event.status == AlertPayload.STATUS_KNOWN ->
-        "Known: ${event.identity ?: "enrolled"}"
-    event.status == AlertPayload.STATUS_CLEAR -> "Clear"
+    event.status == AlertPayload.STATUS_KNOWN -> "Known: ${event.identity ?: "enrolled"}"
+    event.status == AlertPayload.STATUS_CLEAR -> "All clear"
     else -> "Unknown person"
 }
 

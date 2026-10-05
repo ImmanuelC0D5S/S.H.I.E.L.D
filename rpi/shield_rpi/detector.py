@@ -110,6 +110,23 @@ class Detector:
             self._person = self._load("person", self.config.person_model)
         return self._person
 
+    def warm(self) -> None:
+        """Load both models now, before anything can ask for a verdict.
+
+        Lazy loading is right for the models in isolation and wrong for the
+        service: the first pipeline run paid ~4.7 s of ``ultralytics`` import
+        and weights loading on the laptop, which lands inside PROTOCOL.md 4.3's
+        1 s reply budget *and* past the node's 5 s reply timeout (2.9). A
+        service that loads on first use therefore answers its very first
+        trigger late, and the sensor node treats an unanswered trigger as a
+        dead link and goes to its local fail-safe. Loading here makes start-up
+        fail loudly when a weight file is missing, which is the only moment the
+        operator is watching.
+        """
+        self._face = self._load("face", self.config.face_model)
+        self._person = self._load("person", self.config.person_model)
+        LOGGER.info("detector warm: face and person models loaded")
+
     # -- inference ---------------------------------------------------------
 
     def _run(self, model, frame: cv2.MatLike, wanted_class: int | None) -> DetectionResult:

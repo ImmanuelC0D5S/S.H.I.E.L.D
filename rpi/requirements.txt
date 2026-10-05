@@ -30,6 +30,16 @@ face-recognition-models==0.3.0
 Click==8.5.0
 setuptools<81
 
+# --- Optional: the UART demo path (shield-serial-bridge-prompt.md) ---
+# pyserial is imported lazily, inside SerialBridge._open, so a normal
+# deployment never needs it and a missing install is not a start-up failure.
+# It IS needed for `--serial` and for `--list-serial`. Uncomment, or just
+#   pip install pyserial
+# pyserial==3.5
+
 # On Linux (RPi), replace the dlib-bin line above with a source build:
 #   sudo apt install -y build-essential cmake python3-dev
 #   pip install dlib==19.24.6
+#
+# The Pi also needs to be in the dialout group to open /dev/serial0 without
+# root: `sudo usermod -aG dialout shield`, then log out and back in.

@@ -33,8 +33,18 @@ camera:
   stale_after_s: 2.0
 
 detector:
-  face_model: ../models/face.pt
-  person_model: yolov8n.pt
+  # D-026: the pretrained face detector the gate was scored with. This used to
+  # read `../models/face.pt`, which never existed - the file the training run
+  # would have produced (shield_step1_yolo_face.md) was never copied in. The
+  # service therefore raised DetectorError on its first frame, not at startup,
+  # which is the worst time to find out (D-047).
+  face_model: ../models/face_pretrained.pt
+  # Stock YOLOv8n for the person fallback (PROTOCOL 4.1 step 4: a body with no
+  # usable face still has to produce a verdict). Also gitignored with the rest
+  # of rpi/models/. Was a bare `yolov8n.pt`, which resolved to
+  # rpi/shield_rpi/yolov8n.pt - a file nobody had ever downloaded - so
+  # detect_person() raised too, on every frame of every pipeline run.
+  person_model: ../models/yolov8n.pt
   imgsz: 640
   conf: 0.5
 
@@ -48,7 +58,14 @@ recognizer:
 
 link:
   # The RPi hosts this AP; the ESP32 is the TCP client.
-  host: 192.168.50.1
+  #
+  # Bind every interface, not one address. The ESP32 dials a specific IP
+  # (192.168.50.1 on the Pi's own AP, 192.168.29.25 on a laptop), but the server
+  # has to be reachable on whichever of those this host actually holds. Pinning
+  # it to a single literal made the link die with WinError 10049 on any machine
+  # that does not own that address - the bind failure only surfaced as a dead
+  # daemon thread while the service kept reporting itself healthy.
+  host: 0.0.0.0
   port: 8765
   heartbeat_s: 2
   reply_timeout_s: 5
@@ -67,6 +84,12 @@ supabase:
   # The service-role key bypasses RLS entirely, which would make every policy in
   # supabase/migrations/20261003090100_shield_roles_grants.sql decorative.
   key: ${SUPABASE_RPI_TOKEN}
+  # The project's own API key, used ONLY for the `apikey` header. PostgREST
+  # validates that header against the project keys and returns 401 "Invalid API
+  # key" for anything else -- including a valid role token, which is what this
+  # used to send in this slot. The role travels in `Authorization` instead.
+  # Publishable, not a secret; `supabase_get_publishable_keys` returns it.
+  anon_key: ${SUPABASE_ANON_KEY}
   # Private bucket. image_url is a per-delivery signed URL minted by the Edge
   # Function, never a public path.
   bucket: snapshots
@@ -93,3 +116,19 @@ verdict:
   poll_interval_s: 2
   # PROTOCOL.md 3.7 stop condition: give up polling an event after 10 minutes.
   hard_stop_s: 600
+
+serial:
+  # UART demo mode (shield-serial-bridge-prompt.md). The Pi's UART header, with
+  # no Wi-Fi and no HMAC: PIR -> this line -> classify -> ALERT/SAFE back.
+  #
+  # Empty means off, which is the shipped default. Set to /dev/serial0 on the Pi
+  # or COM5 on the laptop. NOT a security boundary -- see PROTOCOL.md 9.
+  port: ""
+  baud: 115200
+  # The prompt fixes this at 2 s. Retrying faster would spin on a missing USB
+  # adapter; slower makes an unplugged node look dead for no reason.
+  reconnect_s: 2
+  # Short, so the reader notices a yanked cable quickly. Classification runs on
+  # this thread and can take a second, which is fine: the busy flag plus the
+  # post-handle flush mean the lines that pile up meanwhile are discarded.
+  read_timeout_s: 0.2

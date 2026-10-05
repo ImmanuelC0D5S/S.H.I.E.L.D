@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -100,14 +101,30 @@ class AlarmPlayer(context: Context) {
         runCatching {
             // 0.5 s on, 0.5 s off, repeat, forever. The gap is what makes this
             // read as an alarm rather than a notification buzz.
-            val pattern = longArrayOf(0, 500, 500)
-            service.vibrate(
-                VibrationEffect.createWaveform(pattern, 0),
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build(),
-            )
+            val effect = VibrationEffect.createWaveform(longArrayOf(0, 500, 500), 0)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // API 33+ takes VibrationAttributes, not AudioAttributes. The
+                // two-argument AudioAttributes overload is deprecated *and
+                // functionally wrong* here: on 33+ the platform ignores the
+                // AudioAttributes and classifies the vibration as a notification,
+                // which Do Not Disturb suppresses - the exact failure this app
+                // exists to avoid. VibrationAttributes is what actually carries
+                // USAGE_ALARM on the new path.
+                service.vibrate(
+                    effect,
+                    VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                service.vibrate(
+                    effect,
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+            }
         }.onFailure { Log.w(TAG, "could not start vibration", it) }
     }
 

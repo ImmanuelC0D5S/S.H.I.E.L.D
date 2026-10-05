@@ -84,7 +84,12 @@ app/local.properties
 *_Impl.java
 *_Impl.class
 
-# ESP-IDF
+# ESP32 firmware
+#
+# secrets.h carries SHIELD_HMAC_KEY and the Wi-Fi PSK. *.h is not ignored
+# globally, so this needs its own pattern -- one `git add .` away from a
+# forgeable sensor link otherwise. Same reasoning as D-045.
+firmware/**/secrets.h
 firmware/esp32/build/
 firmware/esp32/sdkconfig
 firmware/esp32/managed_components/

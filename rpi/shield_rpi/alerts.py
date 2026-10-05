@@ -137,8 +137,12 @@ class SupabaseClient:
     # -- transport ---------------------------------------------------------
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        # Two different credentials, two different headers. PostgREST checks
+        # `apikey` against the project's own keys and answers 401 "Invalid API
+        # key" for anything else -- including a valid shield_rpi token, which is
+        # what this used to send. The role only ever travels in Authorization.
         headers = {
-            "apikey": self.config.key,
+            "apikey": self.config.anon_key,
             "Authorization": f"Bearer {self.config.key}",
         }
         if extra:
@@ -398,7 +402,11 @@ class AlertQueue:
 
             queued.attempts += 1
             try:
-                self.client.upload_snapshot(queued.jpeg, queued.event.image_path)
+                # No snapshot to upload when the trigger produced no usable face;
+                # the row still publishes, because an alert without a photo is
+                # worth far more than no alert.
+                if queued.event.image_path:
+                    self.client.upload_snapshot(queued.jpeg, queued.event.image_path)
                 self.client.insert_event(queued.event)
             except AlertError as exc:
                 queued.last_error = str(exc)
@@ -484,11 +492,32 @@ class AlertPublisher:
             device_id=device_id,
             **extra,
         )
-        if not event.image_path:
-            raise AlertError("image_path is required; upload the snapshot before publishing")
+
+        # A snapshot is carried only when a face was actually detected, so
+        # (jpeg, image_path) is legitimately either both-present or both-empty.
+        # Either one alone is a bug, and both directions are worth a loud failure
+        # rather than a silent one:
+        #
+        #   image_path set, jpeg empty -> a row pointing at an object that was
+        #     never uploaded. The push then signs a URL for a 404, and the user
+        #     gets an alert with a broken image instead of a clean one.
+        #   jpeg set, image_path empty -> a photograph exists and is thrown away,
+        #     which defeats the point of taking it.
+        if event.image_path and not jpeg:
+            raise AlertError(
+                "image_path is set but no snapshot was supplied; an events row must not "
+                "reference a storage object that was never uploaded"
+            )
+        if jpeg and not event.image_path:
+            raise AlertError("a snapshot was supplied but image_path is empty; refusing to discard it")
 
         try:
-            self.client.upload_snapshot(jpeg, event.image_path)
+            if event.image_path:
+                self.client.upload_snapshot(jpeg, event.image_path)
+            else:
+                LOGGER.info(
+                    "publishing %s without a snapshot (no face detected)", event.event_id
+                )
             self.client.insert_event(event)
             self._last_alert_at = self._clock()
             LOGGER.info("published event %s (status %d)", event.event_id, event.status)

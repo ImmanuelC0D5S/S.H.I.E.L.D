@@ -56,6 +56,7 @@ from shield_rpi.http_shim import TriggerShim
 from shield_rpi.link import LinkConnection, LinkServer, new_message
 from shield_rpi.pipeline import Pipeline, Verdict, annotate_snapshot
 from shield_rpi.recognizer import Recogniser
+from shield_rpi.serial_bridge import SerialBridge, list_ports
 from shield_rpi.verdict import VerdictWatcher
 
 LOGGER = logging.getLogger("shield.service")
@@ -125,6 +126,7 @@ class Service:
         )
         self.camera: Camera | None = None
         self.shim: TriggerShim | None = None
+        self.serial: SerialBridge | None = None
         self._shim_port = shim_port
         self._stop = threading.Event()
         self._active: LinkConnection | None = None
@@ -204,17 +206,34 @@ class Service:
 
         def worker() -> None:
             try:
+                # publish() requires the storage object path up front and uploads
+                # the JPEG to it itself, so it has to be built here. Without it
+                # every alert died on "image_path is required" and no push was
+                # ever sent. Convention matches test_alerts.py:
+                # <device>/<YYYY-MM-DD>/<event prefix>.jpg
+                #
+                # Built only when there is a JPEG to put there. The row and the
+                # object must agree: an image_path with nothing behind it yields a
+                # push whose signed URL 404s, which publish() refuses outright.
+                event_id = reply["event_id"]
+                day = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+                image_path = (
+                    f"{self.config.supabase.device_prefix}/{day}/{event_id[:8]}.jpg"
+                    if reply["jpeg"]
+                    else ""
+                )
                 event_id = self.publisher.publish(
                     reply["jpeg"],
                     status=STATUS_ALERT,
                     confidence=reply["confidence"],
                     device_id=self.config.supabase.device_prefix,
+                    image_path=image_path,
                     identity=reply["identity"],
                     trigger_tier=reply.get("tier"),
                     latency_ms=int(reply["latency_ms"]),
                     person_detected=reply["person_detected"],
                     face_detected=reply["face_detected"],
-                    event_id=reply["event_id"],
+                    event_id=event_id,
                 )
                 self.record_event({"type": "alert_published", "event_id": event_id})
                 result = self.verdicts.watch(event_id, self._active)
@@ -237,8 +256,10 @@ class Service:
     def run_pipeline(self, message: dict[str, object] | None = None) -> dict[str, Any]:
         """Run one detection pass and, on an alert, prepare the snapshot.
 
-        Returns the reply body plus, for an alert, the encoded JPEG so the caller
-        can publish it without re-reading the camera.
+        Returns the reply body plus, for an alert **that saw a face**, the encoded
+        JPEG so the caller can publish it without re-reading the camera. An alert
+        with no face detected returns ``jpeg=b""`` and is published without a
+        photograph.
         """
 
         tier = str(message.get("tier")) if message else None
@@ -303,9 +324,17 @@ class Service:
             "tier": tier,
         }
 
-        if verdict.status == STATUS_ALERT_STATUS:
+        if verdict.status == STATUS_ALERT_STATUS and verdict.face_detected:
             reply["jpeg"] = self._encode_snapshot(frames[verdict.snapshot_index], verdict)
         else:
+            # A snapshot is published only when the face detector fired. The one
+            # status-2 path that reaches here without a face is _no_face_verdict
+            # falling back to the person detector (low_conf): a body with no
+            # usable face. That still alarms, because absence of a face is not
+            # absence of an intruder, but it ships no photograph -- a picture of
+            # the back of someone's head is not evidence of anything, and storing
+            # it would put images of the owner's own home in the bucket for every
+            # pass-by shadow.
             reply["jpeg"] = b""
 
         self.record_event({"type": "verdict", "event_id": event_id, **{
@@ -377,10 +406,58 @@ class Service:
         camera.open()
         self.camera = camera
 
-    def start(self, *, open_camera: bool = True, shim: bool = False, fake_trigger: bool = False) -> None:
+    def _warm_pipeline(self) -> None:
+        """Run one throwaway classification so the first real trigger is warm.
+
+        Failures are logged and swallowed: a warm-up that cannot get a frame is a
+        degraded start, not a reason to refuse to serve. The alternative -- the
+        node discovering the cold path by waving -- is far worse.
+        """
+        if self.camera is None:
+            LOGGER.warning("warm-up skipped: no camera open")
+            return
+        try:
+            started = time.perf_counter()
+            verdict = self.pipeline.classify(self.camera.burst())
+            took = (time.perf_counter() - started) * 1000.0
+            LOGGER.info(
+                "warm-up: discarded pass took %.0f ms (status %d); "
+                "first real trigger should now be warm",
+                took,
+                verdict.status,
+            )
+        except Exception:  # noqa: BLE001 - never block start-up on a warm-up
+            LOGGER.warning("warm-up pass failed; first trigger may be slow", exc_info=True)
+
+    def start(
+        self,
+        *,
+        open_camera: bool = True,
+        shim: bool = False,
+        fake_trigger: bool = False,
+        serial_port: str | None = None,
+    ) -> None:
         """Start every background thread and block until stopped."""
+        # First: both models, on this thread, while the operator is watching.
+        # A missing weight file must fail start-up, not the first trigger --
+        # and a cold load costs seconds the node's reply timeout does not have
+        # (Detector.warm).
+        self.detector.warm()
+
         if open_camera:
             self.open_camera()
+
+        # Then: one real, discarded pass over the real capture path. Detector.warm()
+        # loads the weights, but ultralytics does its lazy kernel setup on the
+        # first predict(), so the first genuine trigger measured 5349 ms -- past
+        # the node's 5000 ms reply timeout (PROTOCOL.md 2.9), which made the node
+        # declare a dead RPi and go to its local fail-safe while the laptop was
+        # merely cold. Loading weights is not warming.
+        #
+        # Deliberately before the link thread starts: the node should not be able
+        # to connect until there is a warm service on the other end. The result is
+        # logged and discarded -- no event, no alert, no snapshot.
+        self._warm_pipeline()
 
         threads: list[threading.Thread] = []
 
@@ -393,6 +470,24 @@ class Service:
         queue_thread = threading.Thread(target=self._drain_loop, name="shield-queue", daemon=True)
         queue_thread.start()
         threads.append(queue_thread)
+
+        # UART demo mode (shield-serial-bridge-prompt.md). Independent of the
+        # link server: the node is either on the wire or on the UART, and the
+        # link thread simply finds nobody on the other end.
+        port = serial_port if serial_port is not None else self.config.serial.port
+        if port:
+            self.serial = SerialBridge(
+                port=port,
+                # The same callable the loopback /trigger shim uses, so the two
+                # demo paths cannot disagree about what a face means.
+                on_motion=self._serial_motion,
+                in_cooldown=self.publisher.in_cooldown,
+                on_status=self._serial_status,
+                config=self.config.serial,
+                stop_event=self._stop,
+            )
+            self.serial.start()
+            LOGGER.info("UART demo mode: listening on %s", port)
 
         if shim or fake_trigger:
             self.shim = TriggerShim(
@@ -421,6 +516,8 @@ class Service:
         self._stop.set()
         if self.shim is not None:
             self.shim.stop()
+        if self.serial is not None:
+            self.serial.stop()
         self.link.shutdown()
         if self.camera is not None:
             self.camera.close()
@@ -462,7 +559,29 @@ class Service:
             self._start_alert_work(reply)
         return payload
 
+    def _serial_motion(self) -> dict[str, Any]:
+        """Classify one PIR event from the UART node.
+
+        Delegates to :meth:`_shim_trigger` on purpose. The prompt asks for "the
+        same handler the loopback /trigger shim uses", and it matters: if the
+        serial path had its own copy of the status mapping, a change to one would
+        leave the other answering with a status the buzzer is not expecting, and
+        the demo would disagree with the real deployment.
+        """
+        return self._shim_trigger({})
+
+    def _serial_status(self, reply: dict[str, Any]) -> None:
+        """Record a UART classification in the local event log.
+
+        The alert publishing itself already happened inside
+        :meth:`_shim_trigger`; this only makes the UART decisions visible in
+        ``events.jsonl`` next to the link-driven ones, so a demo and a real
+        trigger are indistinguishable in the log.
+        """
+        self.record_event({"type": "uart_verdict", "port": self.config.serial.port, **reply})
+
     def health(self) -> dict[str, Any]:
+        stats = self.serial.stats() if self.serial is not None else None
         return {
             "status": "ok",
             "sensor_online": self.link.sensor_online,
@@ -472,6 +591,7 @@ class Service:
             "camera": (
                 str(self.camera.actual) if self.camera is not None else None
             ),
+            "uart": stats,
         }
 
     def state(self) -> dict[str, Any]:
@@ -525,6 +645,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--shim-port", type=int, default=8811)
     parser.add_argument(
+        "--serial",
+        metavar="PORT",
+        default=None,
+        help=(
+            "UART demo mode: read MOTION from PORT and answer ALERT/SAFE "
+            "(shield-serial-bridge-prompt.md). Overrides serial.port in "
+            "config.yaml. Windows: COM5. Pi: /dev/serial0. Needs pyserial."
+        ),
+    )
+    parser.add_argument(
+        "--list-serial",
+        action="store_true",
+        help="print the serial ports this machine can see, then exit",
+    )
+    parser.add_argument(
         "--fake-trigger",
         action="store_true",
         help="synthesise a trigger every 30s; laptop bring-up only",
@@ -539,6 +674,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+
+    if args.list_serial:
+        ports = list_ports()
+        if not ports:
+            print("no serial ports found (is pyserial installed?)")
+            return 1
+        for port in ports:
+            print(port)
+        return 0
+
     load_env(args.env_file)
 
     try:
@@ -558,7 +703,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         service.start(
-            open_camera=not args.no_camera, shim=args.shim, fake_trigger=args.fake_trigger
+            open_camera=not args.no_camera,
+            shim=args.shim,
+            fake_trigger=args.fake_trigger,
+            serial_port=args.serial,
         )
     except CameraError as exc:
         LOGGER.error("cannot start: %s", exc)

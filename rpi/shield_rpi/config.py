@@ -128,12 +128,19 @@ class SupabaseConfig:
     ``key`` is the ``shield_rpi`` role's bearer token, not the service-role key.
     The service-role key bypasses RLS, which would make the policies in
     ``supabase/migrations/20261003090100_shield_roles_grants.sql`` decorative.
+
+    ``anon_key`` is a separate, non-secret project key and is **not** optional in
+    practice. PostgREST validates the ``apikey`` header against the project's own
+    keys and rejects anything else with 401 "Invalid API key" -- including a
+    perfectly valid role token. The role travels in ``Authorization`` instead, so
+    the two headers carry different things and neither can stand in for the other.
     """
 
     url: str
     key: str
     bucket: str
     device_prefix: str
+    anon_key: str = ""
     timeout_s: float = 10.0
     max_snapshot_bytes: int = 524288
     queue_dir: str = ""
@@ -146,6 +153,11 @@ class SupabaseConfig:
             raise ConfigError(
                 "supabase.key resolved empty; is SUPABASE_RPI_TOKEN set "
                 "(mint it with tools/mint_role_token.py)?"
+            )
+        if not self.anon_key:
+            raise ConfigError(
+                "supabase.anon_key resolved empty; it is the project key PostgREST "
+                "expects in the apikey header and is NOT the role token"
             )
         if not self.bucket:
             raise ConfigError("supabase.bucket must not be empty")
@@ -204,6 +216,36 @@ class VerdictConfig:
 
 
 @dataclass(frozen=True)
+class SerialConfig:
+    """The UART demo path. ``shield-serial-bridge-prompt.md``.
+
+    Deliberately optional. ``port`` is empty by default so a normal deployment
+    never opens a serial port, and the base install does not need pyserial --
+    the import happens inside ``SerialBridge._open``, so a missing dependency is
+    only an error for someone who actually asked for ``--serial``.
+    """
+
+    port: str = ""
+    baud: int = 115200
+    reconnect_s: float = 2.0
+    read_timeout_s: float = 0.2
+
+    def __post_init__(self) -> None:
+        if not self.port:
+            return  # serial mode is off
+        if self.baud <= 0:
+            raise ConfigError(f"serial.baud must be > 0, got {self.baud}")
+        if self.reconnect_s <= 0:
+            raise ConfigError("serial.reconnect_s must be > 0")
+        if self.read_timeout_s <= 0:
+            raise ConfigError("serial.read_timeout_s must be > 0")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.port)
+
+
+@dataclass(frozen=True)
 class Config:
     camera: CameraConfig
     detector: DetectorConfig
@@ -212,6 +254,8 @@ class Config:
     supabase: SupabaseConfig
     alert: AlertConfig
     verdict: VerdictConfig
+    #: Absent from config.yaml is fine; the default is serial mode off.
+    serial: SerialConfig = field(default_factory=SerialConfig)
     source_path: Path = field(default=DEFAULT_CONFIG_PATH)
 
 
@@ -293,6 +337,7 @@ def load_config(path: str | Path | None = None) -> Config:
     supa = _require(raw, "supabase", "<root>")
     alert = raw.get("alert") or {}
     verd = raw.get("verdict") or {}
+    ser = raw.get("serial") or {}
 
     return Config(
         camera=CameraConfig(
@@ -327,6 +372,7 @@ def load_config(path: str | Path | None = None) -> Config:
         supabase=SupabaseConfig(
             url=str(_require(supa, "url", "supabase")).rstrip("/"),
             key=str(_require(supa, "key", "supabase")),
+            anon_key=str(_require(supa, "anon_key", "supabase")),
             bucket=str(supa.get("bucket", "snapshots")),
             device_prefix=str(supa.get("device_prefix", "shield")),
             timeout_s=float(supa.get("timeout_s", 10)),
@@ -347,6 +393,15 @@ def load_config(path: str | Path | None = None) -> Config:
             timeout_s=float(verd.get("timeout_s", 60)),
             poll_interval_s=float(verd.get("poll_interval_s", 2)),
             hard_stop_s=float(verd.get("hard_stop_s", 600)),
+        ),
+        serial=SerialConfig(
+            # A YAML `port:` with nothing after it parses as None, not "".
+            # Coerce rather than calling .strip() on None, which is the shape
+            # that actually ships since the section is written with port: "".
+            port=str(ser.get("port") or "").strip(),
+            baud=int(ser.get("baud", 115200)),
+            reconnect_s=float(ser.get("reconnect_s", 2)),
+            read_timeout_s=float(ser.get("read_timeout_s", 0.2)),
         ),
         source_path=config_path,
     )

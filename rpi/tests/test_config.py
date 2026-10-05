@@ -46,6 +46,7 @@ BASE = """
     supabase:
       url: ${SUPABASE_URL}
       key: ${SUPABASE_RPI_TOKEN}
+      anon_key: ${SUPABASE_ANON_KEY}
       device_prefix: ${SHIELD_DEVICE_ID}
 """
 
@@ -55,6 +56,7 @@ def env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SHIELD_LINK_KEY", "k" * 32)
     monkeypatch.setenv("SUPABASE_URL", "https://shield.example")
     monkeypatch.setenv("SUPABASE_RPI_TOKEN", "tok")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "project-anon-key")
     monkeypatch.setenv("SHIELD_DEVICE_ID", "shield-01")
     monkeypatch.setenv("COOLDOWN_S", "30")
     monkeypatch.setenv("VERDICT_TIMEOUT_S", "60")

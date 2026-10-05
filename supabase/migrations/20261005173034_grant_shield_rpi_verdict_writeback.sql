@@ -1,0 +1,72 @@
+-- Grant shield_rpi the table-level UPDATE its writeback path needs. DECISIONS.md D-051.
+--
+-- RECONSTITUTED 2026-10-06 from the live database, not from the original ad-hoc run.
+--
+-- The grant was applied to project dnwwwsenujyaffcqiajt through the MCP
+-- apply_migration tool on 2026-10-05 and worked, but it was never written to a
+-- file. `supabase db push` therefore could not reproduce it: a fresh project built
+-- from supabase/migrations/ would have shipped without it and every verdict
+-- writeback would have 403'd. Same class of gap as D-051 itself -- a statement
+-- whose absence is the bug -- except this time nothing on a live board noticed.
+--
+-- Versions deliberately 20261005173034 / 20261005175406, matching what
+-- list_migrations reports for the applied changes. A different timestamp would
+-- make `db push` treat them as pending and re-run them, which is harmless here
+-- because both are idempotent, but it would leave the project permanently
+-- "behind" its own migrations.
+--
+-- Why it was needed. 20261003090100 gives shield_rpi only a COLUMN-level update:
+--
+--   grant update (verdict, verdict_at) on public.events to shield_rpi;
+--
+-- and then explicitly takes the table-level grant away again:
+--
+--   revoke update on public.events from shield_rpi;
+--   grant update (verdict, verdict_at) on public.events to shield_rpi;
+--
+-- The policy events_update_verdict_rpi existed the whole time, with using (true)
+-- and with check (true). So grants looked right and policies looked right and the
+-- writeback still failed, because a policy grants nothing -- it decides which
+-- ROWS a role may touch once it is already permitted to touch the table. Without
+-- the table grant the role is not permitted to touch it at all.
+--
+-- Deliberately still no DELETE, and system_state UPDATE stays app-only, so a
+-- stolen sensor token cannot erase the audit trail or quietly disarm the alarm.
+--
+-- ---------------------------------------------------------------------------
+-- KNOWN WIDENING, recorded rather than quietly carried forward
+-- ---------------------------------------------------------------------------
+-- This is a TABLE-level grant, so shield_rpi may now update ANY column of
+-- events, not just verdict and verdict_at. Verified on the live project with
+-- has_column_privilege:
+--
+--   has_column_privilege('shield_rpi','events','status','UPDATE')      = true
+--   has_column_privilege('shield_rpi','events','confidence','UPDATE')  = true
+--   has_column_privilege('shield_rpi','events','image_path','UPDATE')  = true
+--   has_column_privilege('shield_rpi','events','push_sent_at','UPDATE') = true
+--
+-- That is wider than "verdict writeback" and wider than the principle stated at
+-- the top of 20261003090100: events is the audit trail of who was in someone's
+-- house, and a compromised Pi could now rewrite the evidence rather than merely
+-- stand an alarm down. anon cannot do this (status/confidence are both false),
+-- so it is specifically a sensor-token exposure.
+--
+-- Why it may have been necessary: PostgREST PATCH with a JSON body updates the
+-- columns named in the body, and shield_rpi writes only verdict and verdict_at,
+-- so in principle the column grant was enough. If the writeback 403'd under the
+-- column grant, something else was also wrong and should be identified before
+-- this is narrowed. Narrowing candidate, if the column grant turns out to work:
+--
+--   revoke update on public.events from shield_rpi;
+--   grant update (verdict, verdict_at) on public.events to shield_rpi;
+--
+-- Left as applied rather than changed, because narrowing a live grant that a
+-- working alert path depends on is a behaviour change on a system with no staged
+-- environment, and that is the owner's call, not a migration's.
+
+begin;
+
+grant update on public.events to shield_rpi;
+grant update on storage.objects to shield_rpi;
+
+commit;

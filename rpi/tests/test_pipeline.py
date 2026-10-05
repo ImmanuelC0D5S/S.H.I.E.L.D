@@ -44,7 +44,11 @@ def make_config(match_distance: float = 0.5, alert_confidence: int = 50) -> Conf
         ),
         link=None,  # type: ignore[arg-type]  - unused by the pipeline
         supabase=SupabaseConfig(
-            url="https://shield.example", key="k", bucket="snapshots", device_prefix="shield-01"
+            url="https://shield.example",
+            key="k",
+            anon_key="project-anon-key",
+            bucket="snapshots",
+            device_prefix="shield-01",
         ),
         alert=AlertConfig(),
         verdict=VerdictConfig(),

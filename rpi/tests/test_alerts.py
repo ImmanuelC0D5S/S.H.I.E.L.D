@@ -36,6 +36,7 @@ def make_config(**overrides) -> SupabaseConfig:
     base = {
         "url": "https://shield.example",
         "key": "shield-rpi-token",
+        "anon_key": "project-anon-key",
         "bucket": "snapshots",
         "device_prefix": "shield-01",
         "timeout_s": 1.0,
@@ -353,11 +354,58 @@ def test_cooldown_is_only_set_by_a_successful_publish(tmp_path):
     assert publisher.in_cooldown() is False
 
 
-def test_publish_requires_an_image_path(tmp_path):
+def test_publish_without_a_face_still_inserts_the_event_and_uploads_nothing(tmp_path):
+    """No face detected -> no photograph, but the alert must still reach the phone.
+
+    The distinction that matters: a missing photo is a cosmetic loss, a missing
+    alert is the exact failure this system exists to prevent. So the row is
+    published, with an empty image_path, rather than dropped or raised on.
+    """
     client = RecordingClient(make_config())
     publisher = AlertPublisher(client=client, queue=AlertQueue(tmp_path, client))
-    with pytest.raises(Exception, match="image_path is required"):
-        publisher.publish(b"j", status=2, confidence=50, device_id="d")
+    event_id = publisher.publish(
+        b"", status=2, confidence=40, device_id="d", image_path="",
+        face_detected=False, person_detected=True,
+    )
+
+    assert client.uploads == []
+    assert len(client.events) == 1
+    assert client.events[0].event_id == event_id
+    assert client.events[0].image_path == ""
+    assert client.events[0].face_detected is False
+
+
+def test_publish_refuses_an_image_path_with_no_snapshot_behind_it(tmp_path):
+    """The dangerous direction: a row pointing at an object that was never uploaded.
+
+    The push would sign a URL for it and the user would get an alert carrying a
+    broken image -- which reads as a bug in the camera rather than as the truth.
+    """
+    client = RecordingClient(make_config())
+    publisher = AlertPublisher(client=client, queue=AlertQueue(tmp_path, client))
+    with pytest.raises(Exception, match="never uploaded"):
+        publisher.publish(b"", status=2, confidence=40, device_id="d", image_path="p")
+
+
+def test_publish_refuses_to_throw_away_a_supplied_snapshot(tmp_path):
+    """The other half of the same invariant: a photo with no path is data loss."""
+    client = RecordingClient(make_config())
+    publisher = AlertPublisher(client=client, queue=AlertQueue(tmp_path, client))
+    with pytest.raises(Exception, match="refusing to discard it"):
+        publisher.publish(b"jpeg-bytes", status=2, confidence=40, device_id="d")
+
+
+def test_publish_with_a_face_uploads_the_snapshot_as_before(tmp_path):
+    """The normal path is unchanged: face detected -> photo uploaded and stored."""
+    client = RecordingClient(make_config())
+    publisher = AlertPublisher(client=client, queue=AlertQueue(tmp_path, client))
+    publisher.publish(
+        b"jpeg-bytes", status=2, confidence=88, device_id="d", image_path="p",
+        face_detected=True,
+    )
+
+    assert client.uploads == [(b"jpeg-bytes", "p")]
+    assert client.events[0].image_path == "p"
 
 
 # -- snapshot path ---------------------------------------------------------

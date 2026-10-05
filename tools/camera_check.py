@@ -23,7 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rpi"))
 import cv2  # noqa: E402
 
 # PROTOCOL section 4.1: deployment capture geometry.
-DEPLOYMENT_TARGET = (1280, 720)
+#
+# Was (1280, 720) and stale from before D-028 moved the burst path to 1080p.
+# That default was not harmless: the probe asks each device for this exact
+# geometry, the Logitech Brio 100 only grants 1920x1080, so the one working
+# camera was dropped from consideration and this tool recommended the laptop's
+# covered built-in (luma ~4) instead. config.yaml, PROTOCOL 4.1 and PROTOCOL's
+# config table all say 1920x1080; keep this in step with them.
+DEPLOYMENT_TARGET = (1920, 1080)
 
 # A device that hands back frames this dark is covered, disabled or facing
 # nothing. Mean luma below this is not a usable capture, whatever the geometry.
@@ -141,54 +148,79 @@ def main() -> int:
         return 1
 
     print("\n--- summary ---")
-    exact = [r for r in found if r["actual"] == (width, height)]
-    if exact:
-        # Both cameras usually match the target geometry, so frame rate alone is a
-        # poor tie-breaker and picking the lowest index silently preferred the
-        # built-in even when the intended webcam was also present. Prefer a device
-        # that actually returns a lit scene, then whatever config.yaml already uses,
-        # then the highest frame rate. Dark frames mean covered or disabled, and
-        # training on them produces a useless dataset.
-        usable = [r for r in exact if float(r["luma"]) >= _MIN_LUMA]
-        candidates = usable or exact
-        configured = _configured_device()
+    # The candidate pool is every device that delivered frames, collapsed to the
+    # best-lit fourcc per index. Delivered geometry deliberately does NOT filter
+    # the pool: a camera that only grants 1920x1080 is a working camera, and
+    # requiring an exact match is what let a covered built-in be recommended over
+    # the lit webcam beside it.
+    per_device: dict[int, dict[str, object]] = {}
+    for result in found:
+        index = int(result["index"])
+        if index not in per_device or float(result["luma"]) > float(per_device[index]["luma"]):
+            per_device[index] = result
+
+    configured = _configured_device()
+    lit = [r for r in per_device.values() if float(r["luma"]) >= _MIN_LUMA]
+
+    if len(per_device) > 1:
+        print("More than one device answered. Brightness distinguishes a live camera")
+        print("from a covered one:")
+        for index in sorted(per_device):
+            result = per_device[index]
+            marker = "  <- lit" if float(result["luma"]) >= _MIN_LUMA else "  <- dark/covered"
+            tag = " (currently in config.yaml)" if index == configured else ""
+            print(
+                f"  camera.device: {index}{marker}"
+                f"  luma {float(result['luma']):.0f} @ {float(result['fps']):.1f}fps{tag}"
+            )
+        print()
+
+    if lit:
+        # Lit beats dark outright. Within the lit devices, prefer one that grants
+        # the requested geometry, then whatever config.yaml already uses, then the
+        # highest frame rate. Preferring the configured index first would let a
+        # camera that has since been covered keep winning on inertia alone.
         best = max(
-            candidates,
+            lit,
             key=lambda r: (
+                r["actual"] == (width, height),
                 r["index"] == configured,
-                float(r["luma"]) >= _MIN_LUMA,
                 float(r["fps"]),
             ),
-        )  # type: ignore[arg-type,return-value]
-        note = "" if usable else "  (WARNING: every device returned a dark scene)"
+        )
         print(
             f"Use camera.device: {best['index']}  "
-            f"(delivers {width}x{height}, fourcc {best['fourcc']}, "
-            f"mean luma {float(best['luma']):.0f}){note}"
+            f"(delivers {best['actual'][0]}x{best['actual'][1]}, fourcc {best['fourcc']}, "
+            f"mean luma {float(best['luma']):.0f})"
         )
-        if len({int(r["index"]) for r in exact}) > 1:
-            print("\nMore than one device matched. Brightness distinguishes a live camera")
-            print("from a covered one:")
-            # One row per device: a device appears once per fourcc that worked.
-            per_device: dict[int, dict[str, object]] = {}
-            for result in exact:
-                index = int(result["index"])
-                if index not in per_device or float(result["luma"]) > float(per_device[index]["luma"]):
-                    per_device[index] = result
-            for index in sorted(per_device):
-                result = per_device[index]
-                marker = "  <- lit" if float(result["luma"]) >= _MIN_LUMA else "  <- dark/covered"
-                tag = " (currently in config.yaml)" if index == configured else ""
-                print(
-                    f"  camera.device: {index}{marker}"
-                    f"  luma {float(result['luma']):.0f} @ {float(result['fps']):.1f}fps{tag}"
-                )
+        if best["actual"] != (width, height):
+            # Say it plainly rather than leaving the reader to assume the printed
+            # geometry was the one that was asked for.
+            print(
+                f"  note: no device grants {width}x{height}. The recommendation above "
+                f"delivers {best['actual'][0]}x{best['actual'][1]}, and Camera.open() "
+                f"logs a size-mismatch warning then continues with the actual size."
+            )
+            print(
+                f"  Set camera.width/height in config.yaml to "
+                f"{best['actual'][0]}/{best['actual'][1]} to match what is really delivered."
+            )
     else:
-        print(f"No device delivers {width}x{height}. Closest options:")
-        for result in sorted(
-            found, key=lambda r: abs(r["actual"][0] - width) + abs(r["actual"][1] - height)
-        ):
-            print(f"  camera.device: {result['index']} -> {result['actual'][0]}x{result['actual'][1]}")
+        # Every device that answered was dark. Report that as its own finding and
+        # name the devices, but do not print a "Use camera.device: N" line: pasting
+        # a covered camera into config.yaml yields a black stream and a detector
+        # that can never fire, which reads as "the camera is broken".
+        print(f"WARNING: every probed device returned a dark scene (mean luma < {_MIN_LUMA:.0f}).")
+        print("That means covered, disabled or facing nothing - not necessarily broken.")
+        print("Check the lens cap, and whether another app (Teams/Zoom/Windows Camera)")
+        print("is holding the device. config.yaml was left alone.")
+        for index in sorted(per_device):
+            result = per_device[index]
+            print(
+                f"  device {index}: {result['actual'][0]}x{result['actual'][1]} "
+                f"luma {float(result['luma']):.0f}"
+                + (" (currently in config.yaml)" if index == configured else "")
+            )
     return 0
 
 

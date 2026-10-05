@@ -155,8 +155,18 @@ class Pipeline:
                 match_distance=None,
             )
 
-        # Person, no usable face. Find the frame where the person is most
-        # prominent so the stored snapshot shows them, not an empty doorway.
+        # Person, no usable face. Pick the frame where the person is most
+        # prominent, which is where the detector confidence reported below comes
+        # from.
+        #
+        # NOTE (D-057): service.py does not publish a snapshot on this path --
+        # `face_detected` is False, so there is no photograph of somebody facing
+        # away from the camera. That leaves this as a second full inference pass
+        # whose frame index is no longer consumed. The confidence half is still
+        # used and is already available from the burst loop above, so the pass
+        # looks removable. Not done here: it changes a reported number inside the
+        # 1 s trigger-to-reply budget that PROTOCOL.md 4.3 calls the figure gating
+        # Phase 2. Flagged for the owner rather than changed silently.
         snapshot_index, best_detection = self._best_person_frame(frames)
         confidence = int(round((best_detection.confidence if best_detection else 0.0) * 100))
 
@@ -266,12 +276,16 @@ class Pipeline:
             match_distance=None,
         )
 
-    def _best_person_frame(self, frames: list[cv2.MatLike]) -> int:
+    def _best_person_frame(self, frames: list[cv2.MatLike]) -> tuple[int, Detection | None]:
         """Index of the frame with the largest person box, and that box's detection.
 
-        Largest, not merely present: for a ``low_conf`` event the snapshot is the
-        only evidence the user gets, so it should be the frame where the intruder
-        fills the most of the frame.
+        Largest, not merely present: on the no-usable-face path the person fills
+        the most of the frame, which is the frame worth looking at.
+
+        NOTE (D-057): the frame index this returns is no longer used to build a
+        snapshot, because that path no longer publishes one. The returned
+        detection is still used, for the reported `confidence`. See the note in
+        `_no_face_verdict`.
 
         The winning detection is returned as well as the index so the caller can
         report its confidence without a second inference pass. That is not just

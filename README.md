@@ -2,8 +2,10 @@
 
 Intruder detection system.
 
-- **Sensor node** — ESP32-S3-DevKitC-1, ESP-IDF (C). PIR (IO4) + LD2410 mmWave
-  radar (UART1 @ 256000, presence out IO5) + LEDC buzzer (IO17, 2 kHz).
+- **Sensor node** — ESP32-S3-DevKitC-1, Arduino-ESP32, **one sketch**
+  (`firmware/esp32/shield_esp32/shield_esp32.ino`). PIR (IO4) + LD2410 mmWave
+  radar (UART1 @ 256000, presence out IO5, compiled out by default) + LEDC buzzer
+  (IO17, 2 kHz). Compiles; has never run on a board.
 - **Sensor link** — Wi-Fi. The RPi runs the access point `shield-net`
   (`192.168.50.1:8765`); the ESP32 joins it and is a TCP client. Frames are
   length-prefixed JSON with a per-message HMAC-SHA256 tag. 2 s heartbeat both
@@ -21,12 +23,12 @@ Intruder detection system.
 ## Layout
 
 ```
-firmware/esp32/   ESP-IDF sensor-node firmware (C)  — EMPTY, not started
+firmware/esp32/   Arduino-ESP32 sensor-node firmware — shield_esp32.ino (one file)
 rpi/              Compute node, Python package shield_rpi
 supabase/         migrations/ + send-alert Edge Function
 backend/          EMPTY and abandoned (D-040). A test enforces it stays empty.
 app/              Android app (Kotlin, Compose)
-docs/             PROTOCOL.md — the wire contract, v2.1.0
+docs/             PROTOCOL.md — the wire contract, v2.2.0
 deploy/           systemd unit for the compute node
 tools/            Host-side dataset/enrolment/live-test harness + ops scripts
 ```
@@ -45,8 +47,8 @@ log the reason in `DECISIONS.md`, then change every side together.
 
 Phase 0 gate passed. Phase 1 in progress. **Phases 2, 3, 6 and 7 have code that
 compiles and passes unit tests, but their gates are not passed** — nothing has run
-on a Pi, on an ESP32, or on a phone. Phase 4 (ESP32 firmware) has not started.
-See `HANDOFF.md`.
+on a Pi, on an ESP32, or on a phone. Phase 4 (ESP32 firmware) is written and
+compiles for `esp32s3`, and has never been flashed. See `HANDOFF.md`.
 
 373 Python tests and 13 Kotlin unit tests pass; `ruff check .` is clean.
 

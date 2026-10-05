@@ -16,6 +16,7 @@ import socket
 import struct
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from shield_rpi.link import (
@@ -71,6 +72,49 @@ def test_tag_covers_len_flags_and_body_exactly():
         KEY, (len(body) + 1).to_bytes(4, "big") + bytes([FLAG_JSON]), body
     )
     assert compute_tag(KEY, prefix, body) != compute_tag(KEY, prefix[:-1] + b"\x00", body)
+
+
+# -- 2.5 test vector --------------------------------------------------------
+#: PROTOCOL.md 2.5.1. Fixed so the ESP32 sketch's ``hmacTag()``, ``link.py`` and
+#: ``tools/fake_esp32.py`` can be compared byte for byte without a board.
+VECTOR_KEY = "00112233445566778899aabbccddeeff"
+VECTOR_BODY = (
+    b'{"v":2,"type":"trigger","id":"cafe0001","ts_ms":1234567,'
+    b'"sent_at":"2026-10-01T09:14:03.512Z","tier":"high","sensors":["pir","mmwave"]}'
+)
+VECTOR_PREFIX = bytes.fromhex("0000008601")
+VECTOR_TAG = bytes.fromhex("ec9773c93f151c953b74aea31f529427")
+
+
+def test_protocol_test_vector_tag():
+    """2.5.1: compute the documented frame instead of trusting it."""
+    assert len(VECTOR_BODY) == 134
+    assert len(VECTOR_BODY).to_bytes(4, "big") + bytes([FLAG_JSON]) == VECTOR_PREFIX
+    assert compute_tag(VECTOR_KEY, VECTOR_PREFIX, VECTOR_BODY) == VECTOR_TAG
+
+
+def test_protocol_test_vector_is_the_documented_one():
+    """The constants above and the ones printed in PROTOCOL.md are the same ones."""
+    document = Path(__file__).resolve().parents[2] / "docs" / "PROTOCOL.md"
+    text = document.read_text(encoding="utf-8")
+    assert VECTOR_KEY in text, "test key no longer documented"
+    assert VECTOR_PREFIX.hex() in text, "prefix no longer documented"
+    assert VECTOR_TAG.hex() in text, "tag no longer documented"
+
+
+def test_encode_frame_reproduces_the_documented_frame():
+    """Serialising the vector's message must yield exactly the documented bytes."""
+    assert encode_frame(json.loads(VECTOR_BODY), VECTOR_KEY) == (
+        VECTOR_PREFIX + VECTOR_BODY + VECTOR_TAG
+    )
+
+
+def test_decoder_accepts_the_documented_frame():
+    """The frame the RPi prints must also be the frame the RPi parses."""
+    (decoded,) = FrameDecoder(VECTOR_KEY).feed(VECTOR_PREFIX + VECTOR_BODY + VECTOR_TAG)
+    assert decoded.message["type"] == "trigger"
+    assert decoded.message["id"] == "cafe0001"
+    assert decoded.message["sensors"] == ["pir", "mmwave"]
 
 
 def test_flipped_bit_in_len_is_rejected():

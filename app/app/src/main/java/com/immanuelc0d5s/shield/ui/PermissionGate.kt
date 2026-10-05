@@ -10,17 +10,18 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,9 +29,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.immanuelc0d5s.shield.ui.theme.ShieldAlertColors
+import com.immanuelc0d5s.shield.ui.theme.ShieldSpacing
 
 /**
  * P0 #6: the runtime permissions this app cannot work without.
@@ -125,42 +129,58 @@ fun PermissionGate(onAllGranted: () -> Unit = {}) {
         }
     }
 
-    Column(
-        modifier = Modifier.padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        Text("S.H.I.E.L.D needs a few permissions", style = MaterialTheme.typography.headlineMedium)
+        AmbientBackground()
 
-        Text(
-            "Without them the alarm cannot wake you. Nothing is sent anywhere else " +
-                "and no camera access is requested - this app only receives alerts.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        PermissionRow(
-            title = "Notifications",
-            why = "Required. Without it the alarm is silent and invisible.",
-            granted = state.notificationsGranted,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(ShieldSpacing.screen),
+            verticalArrangement = Arrangement.spacedBy(ShieldSpacing.md),
         ) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                openAppNotificationSettings(context)
+            Text(
+                "S.H.I.E.L.D needs a few permissions",
+                style = MaterialTheme.typography.headlineMedium,
+            )
+
+            Text(
+                "Without them the alarm cannot wake you. Nothing is sent anywhere else " +
+                    "and no camera access is requested - this app only receives alerts.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            SectionLabel("Required")
+
+            PermissionRow(
+                title = "Notifications",
+                why = "Required. Without it the alarm is silent and invisible.",
+                granted = state.notificationsGranted,
+            ) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    openAppNotificationSettings(context)
+                }
             }
+
+            PermissionRow(
+                title = "Lock-screen alerts",
+                why = "Required to show the alert over the lock screen.",
+                granted = state.canUseFullScreenIntent,
+            ) { openFullScreenIntentSettings(context) }
+
+            PermissionRow(
+                title = "Ignore battery optimisation",
+                why = "Doze delays push delivery. Exempt this app so alerts arrive promptly.",
+                granted = state.batteryExempt,
+            ) { openBatterySettings(context) }
         }
-
-        PermissionRow(
-            title = "Lock-screen alerts",
-            why = "Required to show the alert over the lock screen.",
-            granted = state.canUseFullScreenIntent,
-        ) { openFullScreenIntentSettings(context) }
-
-        PermissionRow(
-            title = "Ignore battery optimisation",
-            why = "Doze delays push delivery. Exempt this app so alerts arrive promptly.",
-            granted = state.batteryExempt,
-        ) { openBatterySettings(context) }
     }
 }
 
@@ -171,29 +191,37 @@ private fun PermissionRow(
     granted: Boolean,
     onFix: () -> Unit,
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+    GlassCard(contentPadding = ShieldSpacing.md) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(ShieldSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                why,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
             )
-            if (granted) {
-                Text(
-                    "Granted",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-            } else {
-                Button(
-                    onClick = onFix,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                ) { Text("Grant") }
-            }
+            StatusChip(
+                label = if (granted) "Granted" else "Needs attention",
+                color = if (granted) ShieldAlertColors.known else ShieldAlertColors.lowConfidence,
+            )
+        }
+
+        Text(
+            why,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (!granted) {
+            ShieldButton(
+                label = "Grant",
+                onClick = onFix,
+                containerColor = MaterialTheme.colorScheme.primary,
+                height = 48.dp,
+                shape = RoundedCornerShape(14.dp),
+            )
         }
     }
 }
